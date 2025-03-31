@@ -1,5 +1,9 @@
 *__pycache__*
 
+# Gmail API Authentication Credentials
+gmail_client_secrets_desktop.json
+token.pickle
+
 # Python specific stuff
 # Byte-compiled / optimized / DLL files
 __pycache__/
