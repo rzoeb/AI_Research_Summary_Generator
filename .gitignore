@@ -2,6 +2,7 @@
 
 # Gmail API Authentication Credentials
 gmail_client_secrets_desktop.json
+gmail_client_secrets_web.json
 token.pickle
 
 # Python specific stuff
