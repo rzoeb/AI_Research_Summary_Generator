@@ -4,6 +4,7 @@
 gmail_client_secrets_desktop.json
 gmail_client_secrets_web.json
 token.pickle
+token_web.pickle
 
 # Python specific stuff
 # Byte-compiled / optimized / DLL files
