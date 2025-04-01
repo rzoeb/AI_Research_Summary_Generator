@@ -320,6 +320,86 @@ def extract_medium_articles(email_body: str) -> str:
     # Return articles as a JSON string
     return json.dumps(articles)
 
+@mcp.tool()
+def get_medium_articles_from_gmail() -> str:
+    """
+    Retrieve and extract Medium articles from the latest Medium Daily Digest email in the Gmail inbox.
+
+    This tool combines the functionality of `get_gmail_message` and `extract_medium_articles` to directly fetch
+    Medium articles from the latest Medium Daily Digest email. The search query "from:noreply@medium.com in:inbox"
+    is hardcoded to locate the email.
+
+    Returns:
+        str: A JSON string containing an array of article objects. Each object has:
+            - "Article Name": The title of the article
+            - "Link": The URL to the full article
+            - "Author": The name of the article's author (or "Unknown" if not found)
+
+        Example response:
+        '{
+            {
+                "Article Name": "How to Build a Neural Network from Scratch",
+                "Link": "https://medium.com/towards-data-science/neural-network-scratch-12345",
+                "Author": "Jane Doe"
+            },
+            {
+                "Article Name": "The Future of Artificial Intelligence",
+                "Link": "https://medium.com/ai-magazine/future-ai-67890",
+                "Author": "John Smith"
+            }
+        }'
+
+    Error Handling:
+        All errors are returned as JSON strings with an "error" key containing the error message.
+        Common error scenarios:
+
+        - No Medium Daily Digest email found:
+          '{"error": "No Medium Daily Digest email found in the inbox."}'
+
+        - Email body extraction failure:
+          '{"error": "Failed to extract email body from the Medium Daily Digest email."}'
+
+        - Article extraction failure:
+          '{"error": "Failed to extract articles from the Medium Daily Digest email."}'
+
+        - Authentication errors:
+          '{"error": "Failed to authenticate with Gmail API: [specific error message]"}'
+
+        - Missing environment variables:
+          '{"error": "Missing required environment variables (GMAIL_TOKEN_PATH or GMAIL_CREDENTIALS_PATH)"}'
+
+        - File access errors:
+          '{"error": "Could not access token/credentials file: [specific error message]"}'
+
+        - Gmail API errors:
+          '{"error": "Gmail API error: [specific error message]"}'
+
+    """
+    try:
+        # Hardcoded search query for Medium Daily Digest email
+        query = "from:noreply@medium.com in:inbox"
+
+        # Retrieve the latest Medium Daily Digest email
+        email_response = get_gmail_message(query=query)
+
+        if "error" in email_response:
+            return json.dumps({"error": email_response["error"]})
+
+        # Extract the email body
+        email_body = email_response.get("body", "")
+        if not email_body:
+            return json.dumps({"error": "Failed to extract email body from the Medium Daily Digest email."})
+
+        # Extract Medium articles from the email body
+        articles_response = extract_medium_articles(email_body)
+        if not articles_response:
+            return json.dumps({"error": "Failed to extract articles from the Medium Daily Digest email."})
+
+        return articles_response
+
+    except Exception as e:
+        return json.dumps({"error": f"Unexpected error: {str(e)}"})
+
 # Helper Functions
 def _format_message(msg):
     """
