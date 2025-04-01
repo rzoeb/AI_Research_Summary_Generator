@@ -8,6 +8,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import pickle
 from bs4 import BeautifulSoup
+import json
 
 mcp = FastMCP("Gmail MCP Server")
 
@@ -153,7 +154,7 @@ def get_gmail_message(message_id: str = None, query: str = None) -> dict:
         return {"error": f"Unexpected error: {str(e)}"}
 
 @mcp.tool()
-def extract_medium_articles(email_body: str) -> list:
+def extract_medium_articles(email_body: str) -> str:
     """
     Extract article information from Medium Daily Digest newsletters in HTML format.
     
@@ -170,13 +171,13 @@ def extract_medium_articles(email_body: str) -> list:
                    This should be the raw HTML body from the email, not a plain text version.
                    
     Returns:
-        list: On success, returns a list of dictionaries, each containing:
+        str: A JSON string containing an array of article objects. Each object has:
             - "Article Name": The title of the article
             - "Link": The URL to the full article
             - "Author": The name of the article's author (or "Unknown" if not found)
             
         Example response:
-        [
+        '[
             {
                 "Article Name": "How to Build a Neural Network from Scratch",
                 "Link": "https://medium.com/towards-data-science/neural-network-scratch-12345",
@@ -187,13 +188,13 @@ def extract_medium_articles(email_body: str) -> list:
                 "Link": "https://medium.com/ai-magazine/future-ai-67890",
                 "Author": "John Smith"
             }
-        ]
+        ]'
     
     Error Handling:
         All errors are handled gracefully, with the function returning specific results:
         
-        - Empty list: If the email is not a Medium Daily Digest, or no articles could be found
-          []
+        - Empty JSON array: If the email is not a Medium Daily Digest, or no articles could be found
+          '[]'
           
         - Partial results: If some articles were found but had incomplete information,
           those with at least a title and link will be included
@@ -202,7 +203,7 @@ def extract_medium_articles(email_body: str) -> list:
           will be set to "Unknown"
           
         - Invalid HTML: If the email_body is not valid HTML or cannot be parsed,
-          an empty list is returned
+          an empty JSON array is returned ('[]')
           
         No exceptions are raised to the caller, making this tool safe to use without
         additional error handling.
@@ -215,7 +216,7 @@ def extract_medium_articles(email_body: str) -> list:
         
         # Check if this appears to be a Medium Daily Digest (case-insensitive)
         if "medium daily digest" not in email_body.lower() and "today's highlights" not in email_body.lower():
-            return []
+            return json.dumps([])
         
         # Find all article sections - using multiple strategies for robustness
         article_sections = soup.find_all('div', class_=lambda c: c and 'cd' in (c.split() if c else []))
@@ -268,11 +269,12 @@ def extract_medium_articles(email_body: str) -> list:
                 articles.append(article)
     
     except Exception as e:
-        # If parsing fails, return empty list
+        # If parsing fails, return empty JSON array
         print(f"Error parsing Medium Daily Digest: {str(e)}")
-        return []
+        return json.dumps([])
     
-    return articles
+    # Return articles as a JSON string
+    return json.dumps(articles)
 
 # Helper Functions
 def _format_message(msg):

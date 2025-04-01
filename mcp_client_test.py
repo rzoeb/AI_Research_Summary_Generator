@@ -138,14 +138,12 @@ async def run():
                 if not articles:
                     print("\nNo articles were found in this email or it's not a Medium Daily Digest.")
                 else:
-                    # print(f"\nExtracted {len(articles)} articles from the Medium Daily Digest:")
-                    # print(type(articles))
-                    print(articles_response)
-                    # for i, article in enumerate(articles, 1):
-                    #     print(f"\nArticle {i}:")
-                    #     print(f"Title: {article.get('Article Name', 'N/A')}")
-                    #     print(f"Author: {article.get('Author', 'N/A')}")
-                    #     print(f"Link: {article.get('Link', 'N/A')}")
+                    print(f"\nExtracted {len(articles)} articles from the Medium Daily Digest:")
+                    for i, article in enumerate(articles, 1):
+                        print(f"\nArticle {i}:")
+                        print(f"Title: {article.get('Article Name', 'N/A')}")
+                        print(f"Author: {article.get('Author', 'N/A')}")
+                        print(f"Link: {article.get('Link', 'N/A')}")
             
             # Example 6: Test error handling with non-Medium email
             print("\n\n--- Example 6: Test extract_medium_articles with non-Medium email ---")
