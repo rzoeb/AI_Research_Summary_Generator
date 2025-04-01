@@ -4,6 +4,8 @@ import os
 import asyncio
 from dotenv import load_dotenv
 import json
+import anthropic
+from datetime import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -15,6 +17,36 @@ server_params = StdioServerParameters(
     env=os.environ.copy()
 )
 
+# Load API key from environment variables
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    print("Error: ANTHROPIC_API_KEY environment variable not set.")
+
+# Initialize Claude client
+client = anthropic.Anthropic(api_key=api_key)
+
+llm_system_prompt = """
+You are an AI assistant that helps users with a broad range of requests by using special tools.
+
+Available tools:
+{tools_description}
+
+When the user makes a request, you should:
+1. Decide whether to use internal knowledge or one or more tools to fulfill the request.
+2. If tools are needed, choose the most appropriate ones and use them step-by-step.
+3. Interpret the tool results and present helpful, well-organized responses to the user, following any requested output formats.
+4. If a tool fails or returns an error, explain the issue to the user and suggest alternatives if possible.
+
+Guidelines:
+- Use tools only when they improve accuracy, access real-time data, or enable capabilities you don't have internally.
+- Explain your reasoning when it helps the user understand the process.
+- Adapt to new tools as they become available. Never assume a tool exists unless it is listed.
+
+Think step-by-step about which tools to use and in what order.
+"""
+
+user_prompt = "Please extract the articles from my latest Medium Daily Digest Email."
+
 async def run():
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(
@@ -23,163 +55,87 @@ async def run():
             # Initialize the connection
             await session.initialize()
             print("Successfully connected to Gmail MCP server!")
-            
-            # List available tools
-            response = await session.list_tools()
-            print("\nAvailable tools:")
+
+            # Get information about available tools
+            tools_response = await session.list_tools()
             available_tools = [{
                 "name": tool.name,
-                "description": tool.description[:50] + "..." if len(tool.description) > 50 else tool.description
-            } for tool in response.tools]
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            } for tool in tools_response.tools]
             
+            # Format tool info for the system prompt
+            tools_info = ""
             for tool in available_tools:
-                print(f"- {tool['name']}: {tool['description']}")
-
-            # Example 1: Search Gmail with a query
-            print("\n\n--- Example 1: Search Gmail with a query ---")
-            query = "from:noreply@medium.com in:inbox"
-            print(f"Searching for: {query}")
-
-            # Get the result and extract the actual result data
-            tool_response = await session.call_tool("get_gmail_message", arguments={"query": query})
-
-            # Extract the text content and parse as JSON
-            json_str = tool_response.content[0].text
-
-            # Parse the JSON string into a Python dictionary
-            result = json.loads(json_str)
-                
-            # Check for error
-            if "error" in result:
-                print(f"\nError: {result['error']}")
-            else:
-                print(f"\nFound email:")
-                print(f"ID: {result.get('id', 'N/A')}")
-                print(f"Thread ID: {result.get('threadId', 'N/A')}")
-                print(f"Label IDs: {', '.join(result.get('labelIds', []))}")
-                print(f"Subject: {result.get('subject', 'N/A')}")
-                print(f"From: {result.get('from', 'N/A')}")
-                print(f"To: {result.get('to', 'N/A')}")
-                print(f"Date: {result.get('date', 'N/A')}")
-                print(f"\nSnippet:\n{result.get('snippet', 'N/A')}")
-                print(f"\nBody (HTML):\n{result.get('body', 'N/A')[:500]}...")  # Truncating HTML output for readability
-                
-                # Get the message ID for the next example
-                message_id = result.get('id')
-                if message_id:
-                    # Example 2: Get email by ID
-                    print("\n\n--- Example 2: Get email by ID ---")
-                    print(f"Retrieving message with ID: {message_id}")
-                    
-                    # Extract result data properly
-                    id_tool_response = await session.call_tool("get_gmail_message", arguments={"message_id": message_id})
-                    id_json_str = id_tool_response.content[0].text
-                    id_result = json.loads(id_json_str)
-                    
-                    if "error" in id_result:
-                        print(f"\nError: {id_result['error']}")
-                    else:
-                        print(f"\nRetrieved email details:")
-                        print(f"ID: {id_result.get('id', 'N/A')}")
-                        print(f"Thread ID: {id_result.get('threadId', 'N/A')}")
-                        print(f"Label IDs: {', '.join(id_result.get('labelIds', []))}")
-                        print(f"Subject: {id_result.get('subject', 'N/A')}")
-                        print(f"From: {id_result.get('from', 'N/A')}")
-                        print(f"To: {id_result.get('to', 'N/A')}")
-                        print(f"Date: {id_result.get('date', 'N/A')}")
-                        print(f"\nSnippet:\n{id_result.get('snippet', 'N/A')}")
-                        print(f"\nBody (HTML):\n{id_result.get('body', 'N/A')[:500]}...")  # Truncating HTML output for readability
+                tools_info += f"Tool: {tool['name']}\n"
+                tools_info += f"Description: {tool['description']}\n"
+                tools_info += f"Arguments: {json.dumps(tool['input_schema'], indent=2)}\n\n"
             
-            # Example 3: Test error handling - missing parameters
-            print("\n\n--- Example 3: Test error handling - missing parameters ---")
-            error_tool_response = await session.call_tool("get_gmail_message", arguments={})
-            error_result_json = error_tool_response.content[0].text
-            error_result = json.loads(error_result_json)
-            print(f"Result with no parameters: {error_result}")
+            # Keep track of conversation history
+            conversation = [
+                {"role": "user", "content": user_prompt}
+            ]
             
-            # Example 4: Test error handling - non-existent message
-            print("\n\n--- Example 4: Test error handling - non-existent query ---")
-            not_found_tool_response = await session.call_tool(
-                "get_gmail_message", 
-                arguments={"query": "from:nonexistent123456@example.com subject:\"This Should Not Exist\" after:2099/01/01"}
-            )
-            not_found_result_json = not_found_tool_response.content[0].text
-            not_found_result = json.loads(not_found_result_json)
-            print(f"Result with non-existent query: {not_found_result}")
-            
-            # Example 5: Extract articles from Medium Daily Digest
-            print("\n\n--- Example 5: Extract articles from Medium Daily Digest ---")
-            medium_query = "from:noreply@medium.com in:inbox"
-            print(f"Searching for Medium Daily Digest: {medium_query}")
-            
-            # Get Medium Daily Digest email
-            medium_response = await session.call_tool("get_gmail_message", arguments={"query": medium_query})
-            medium_json_str = medium_response.content[0].text
-            medium_result = json.loads(medium_json_str)
-            
-            # Check for error in email retrieval
-            if "error" in medium_result:
-                print(f"\nError retrieving Medium Daily Digest: {medium_result['error']}")
-            else:
-                print(f"\nFound Medium Daily Digest email:")
-                print(f"Subject: {medium_result.get('subject', 'N/A')}")
-                print(f"From: {medium_result.get('from', 'N/A')}")
-                print(f"Date: {medium_result.get('date', 'N/A')}")
+            while True:
+                print("\nSending request to Claude with current conversation...")
+                response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=8192,
+                    tools=available_tools,
+                    temperature=0,
+                    system=llm_system_prompt.format(tools_description=tools_info),
+                    messages=conversation
+                )
                 
-                # Extract and process articles from the email
-                email_body = medium_result.get('body', '')
+                # Extract and print Claude's assistant message
+                assistant_response = response.content[0].text
+                print("\nClaude's response:")
+                print(assistant_response)
                 
-                # Call the extract_medium_articles tool
-                articles_response = await session.call_tool("extract_medium_articles", arguments={"email_body": email_body})
-                articles_json_str = articles_response.content[0].text
-                articles = json.loads(articles_json_str)
-                
-                # Display the extracted articles
-                if not articles:
-                    print("\nNo articles were found in this email or it's not a Medium Daily Digest.")
+                # If Claude requests a tool, process the tool use blocks
+                if response.stop_reason == "tool_use":
+                    tool_blocks = [block for block in response.content if block.type == "tool_use"]
+                    if not tool_blocks:
+                        print("No tool use block found despite stop_reason indicating tool use.")
+                        break
+                    for block in tool_blocks:
+                        tool_name = block.name
+                        tool_input = block.input  # expected to be a dict
+                        tool_call_id = block.id
+                        print(f"\nClaude requested tool: {tool_name} with input: {json.dumps(tool_input)}")
+                        
+                        # Execute the tool and parse the result
+                        try:
+                            tool_response = await session.call_tool(tool_name, arguments=tool_input)
+                            tool_result_text = tool_response.content[0].text
+                            tool_result = json.loads(tool_result_text)
+                            print(f"Tool '{tool_name}' executed successfully. Result (truncated): {json.dumps(tool_result)[:500]}...")
+                        except Exception as e:
+                            tool_result = {"error": str(e)}
+                            print(f"Error executing tool {tool_name}: {e}")
+                        
+                        # Append the assistant's tool use message to conversation history
+                        conversation.append({
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": assistant_response},
+                                {"type": "tool_use", "id": tool_call_id, "name": tool_name, "input": tool_input}
+                            ]
+                        })
+                        # Append the tool result back to Claude as a user message (using tool_result type)
+                        conversation.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "tool_result", "tool_use_id": tool_call_id, "content": json.dumps(tool_result)}
+                            ]
+                        })
+                    # Continue the loop to let Claude process the tool results
+                    continue
                 else:
-                    print(f"\nExtracted {len(articles)} articles from the Medium Daily Digest:")
-                    for i, article in enumerate(articles, 1):
-                        print(f"\nArticle {i}:")
-                        print(f"Title: {article.get('Article Name', 'N/A')}")
-                        print(f"Author: {article.get('Author', 'N/A')}")
-                        print(f"Link: {article.get('Link', 'N/A')}")
-            
-            # Example 6: Test error handling with non-Medium email
-            print("\n\n--- Example 6: Test extract_medium_articles with non-Medium email ---")
-            non_medium_query = "NOT from:medium.com in:inbox"
-            print(f"Searching for non-Medium email: {non_medium_query}")
-            
-            # Get a non-Medium email
-            non_medium_response = await session.call_tool("get_gmail_message", arguments={"query": non_medium_query})
-            non_medium_json_str = non_medium_response.content[0].text
-            non_medium_result = json.loads(non_medium_json_str)
-            
-            if "error" in non_medium_result:
-                print(f"\nError retrieving non-Medium email: {non_medium_result['error']}")
-            else:
-                non_medium_body = non_medium_result.get('body', '')
-                
-                try:
-                    # Try to extract articles from a non-Medium email
-                    test_response = await session.call_tool("extract_medium_articles", arguments={"email_body": non_medium_body})
-                    
-                    # Handle potential empty response
-                    if not test_response.content:
-                        print("The extract_medium_articles tool returned an empty response.")
-                        test_result = []
-                    else:
-                        test_json_str = test_response.content[0].text
-                        test_result = json.loads(test_json_str)
-                    
-                    # Check the result
-                    if not test_result:
-                        print("Successfully detected non-Medium email and returned empty list as expected.")
-                    else:
-                        print(f"Unexpected result: Found {len(test_result)} articles in a non-Medium email.")
-                
-                except Exception as e:
-                    print(f"Error testing extract_medium_articles with non-Medium email: {str(e)}")
+                    # If no tool use is requested, output the final response and exit the loop
+                    print("\nFinal response from Claude:")
+                    print(assistant_response)
+                    break
 
 if __name__ == "__main__":
     asyncio.run(run())

@@ -22,33 +22,77 @@ def get_gmail_message(message_id: str = None, query: str = None) -> dict:
     requires browser-based authorization.
     
     Args:
-        message_id: The unique ID of a specific Gmail message to retrieve. If provided, query parameter is ignored.
+        message_id: The unique ID of a specific Gmail message to retrieve. If provided, the query parameter is ignored.
                    Example: "18de3456a7b890cd"
         
-        query: Gmail search query using Gmail's advanced search operators. Returns only the first matching message.
+        query: A Gmail search query that uses Gmail's advanced search operators. The query is used to
+               locate emails matching specific criteria and returns only the first matching message.
                
-               Common search operators:
-               - from:[email] - Messages from a specific sender
-               - to:[email] - Messages to a specific recipient
-               - subject:[text] - Messages with specific text in subject
-               - after:[YYYY/MM/DD] - Messages after date
-               - before:[YYYY/MM/DD] - Messages before date
-               - is:unread - Unread messages
-               - has:attachment - Messages with attachments
-               - in:[folder] - Messages in a specific folder/label (e.g., in:inbox, in:trash, in:spam)
-               - label:[name] - Messages with a specific label
+               **Supported Operators and Examples:**
                
-               Example queries:
-               - "from:noreply@medium.com in:inbox" 
-               - "from:github.com is:unread in:inbox"
-               - "subject:invoice after:2023/01/01 in:inbox"
-               - "in:spam from:newsletter"
-               - "label:work has:attachment"
-               - "in:trash subject:meeting"
+               - **from:**  
+                 Searches for messages sent from a specific sender.  
+                 Example: from:noreply@medium.com
                
-               For complex searches, combine multiple operators:
-               - "from:medium.com in:inbox after:2023/01/01 has:attachment"
-    
+               - **to:**  
+                 Searches for messages sent to a specific recipient.  
+                 Example: to:support@example.com
+               
+               - **subject:**  
+                 Searches for messages with specific text in the subject line.  
+                 Example: subject:invoice
+               
+               - **after:** and **before:**  
+                 Searches for messages sent after or before a specific date (format: YYYY/MM/DD).  
+                 Example: after:2023/01/01 before:2023/12/31
+               
+               - **is:**  
+                 Searches for messages with a particular status (e.g., unread, starred).  
+                 Example: is:unread
+               
+               - **has:**  
+                 Searches for messages that contain specific features, such as attachments.  
+                 Example: has:attachment
+               
+               - **in:** or **label:**  
+                 Searches for messages in a specific folder/label (e.g., inbox, trash, spam).  
+                 Example: in:inbox or label:work
+               
+               **Advanced Query Syntax Best Practices:**
+               
+               - **Avoid Quoting Field Names:**  
+                 Do not enclose search operator fields (e.g., from:, subject:) or their values in double quotes 
+                 unless you are explicitly performing an exact phrase search. For example, use subject:invoice rather 
+                 than "subject:invoice". Quoting these fields may cause Gmail to treat them as literal strings rather 
+                 than operators.
+               
+               - **Exact Phrase Searches:**  
+                 To search for an exact phrase within the email body or subject, enclose the phrase in double quotes.  
+                 Example: subject:"monthly report"
+               
+               - **Logical Operators:**  
+                 When combining operators, use uppercase logical operators (e.g., OR, AND, NOT) to ensure proper 
+                 parsing.  
+                 Example: from:github.com OR from:gitlab.com
+               
+               - **Literal Escape Characters:**  
+                 Note that any Python escape characters (e.g., \\n, \\t) in the query string will be passed 
+                 literally to the Gmail API. Ensure that your query does not inadvertently include escape sequences 
+                 that alter the intended search pattern.
+               
+               **Example Queries:**
+               
+               - from:noreply@medium.com in:inbox (This is the exact query to use to get the latest Medium Daily Digest email)
+               - from:github.com is:unread in:inbox
+               - subject:invoice after:2023/01/01 in:inbox
+               - in:spam from:newsletter
+               - label:work has:attachment
+               - in:trash subject:"team meeting"
+               
+               For complex searches, combine multiple operators without quoting the field names:
+               
+               - from:medium.com in:inbox after:2023/01/01 has:attachment
+               
     Returns:
         dict: On success, returns email details including:
             - id: Unique message ID
