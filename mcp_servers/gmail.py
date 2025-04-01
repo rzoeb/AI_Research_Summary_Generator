@@ -39,7 +39,7 @@ def get_gmail_message(message_id: str = None, query: str = None) -> dict:
                - label:[name] - Messages with a specific label
                
                Example queries:
-               - "from:medium.com subject:\"Daily Digest\" in:inbox" 
+               - "from:noreply@medium.com in:inbox" 
                - "from:github.com is:unread in:inbox"
                - "subject:invoice after:2023/01/01 in:inbox"
                - "in:spam from:newsletter"
