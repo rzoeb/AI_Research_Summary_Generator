@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import pickle
+from bs4 import BeautifulSoup
 
 mcp = FastMCP("Gmail MCP Server")
 
@@ -57,7 +58,7 @@ def get_gmail_message(message_id: str = None, query: str = None) -> dict:
             - from: Sender information
             - to: Recipient information 
             - date: Date and time sent
-            - body: Full email body text (plain text version)
+            - body: Full email body text in HTML format (when available, plain text as fallback)
     
     Error Handling:
         All errors are returned as dictionaries with an "error" key containing the error message.
@@ -151,13 +152,143 @@ def get_gmail_message(message_id: str = None, query: str = None) -> dict:
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
 
+@mcp.tool()
+def extract_medium_articles(email_body: str) -> list:
+    """
+    Extract article information from Medium Daily Digest newsletters in HTML format.
+    
+    This tool parses Medium Daily Digest HTML emails and extracts article titles, author names,
+    and direct article links. It uses BeautifulSoup to navigate the HTML structure, identifying
+    common patterns found in Medium newsletters.
+    
+    IMPORTANT: This tool ONLY works with Medium Daily Digest newsletter emails in HTML format.
+    It is specifically designed for the structure of Medium's email newsletters and will not
+    work with other email formats.
+    
+    Args:
+        email_body: The complete HTML content of a Medium Daily Digest email as a string.
+                   This should be the raw HTML body from the email, not a plain text version.
+                   
+    Returns:
+        list: On success, returns a list of dictionaries, each containing:
+            - "Article Name": The title of the article
+            - "Link": The URL to the full article
+            - "Author": The name of the article's author (or "Unknown" if not found)
+            
+        Example response:
+        [
+            {
+                "Article Name": "How to Build a Neural Network from Scratch",
+                "Link": "https://medium.com/towards-data-science/neural-network-scratch-12345",
+                "Author": "Jane Doe"
+            },
+            {
+                "Article Name": "The Future of Artificial Intelligence",
+                "Link": "https://medium.com/ai-magazine/future-ai-67890",
+                "Author": "John Smith"
+            }
+        ]
+    
+    Error Handling:
+        All errors are handled gracefully, with the function returning specific results:
+        
+        - Empty list: If the email is not a Medium Daily Digest, or no articles could be found
+          []
+          
+        - Partial results: If some articles were found but had incomplete information,
+          those with at least a title and link will be included
+          
+        - Missing author: If an article's author cannot be determined, the "Author" field
+          will be set to "Unknown"
+          
+        - Invalid HTML: If the email_body is not valid HTML or cannot be parsed,
+          an empty list is returned
+          
+        No exceptions are raised to the caller, making this tool safe to use without
+        additional error handling.
+    """
+    articles = []
+    
+    try:
+        # Parse the HTML
+        soup = BeautifulSoup(email_body, 'html.parser')
+        
+        # Check if this appears to be a Medium Daily Digest (case-insensitive)
+        if "medium daily digest" not in email_body.lower() and "today's highlights" not in email_body.lower():
+            return []
+        
+        # Find all article sections - using multiple strategies for robustness
+        article_sections = soup.find_all('div', class_=lambda c: c and 'cd' in (c.split() if c else []))
+        
+        for section in article_sections:
+            article = {}
+            
+            # Extract title from h2 element
+            title_elem = section.find('h2')
+            if title_elem:
+                article['Article Name'] = title_elem.get_text(strip=True)
+            
+            # Extract author - try multiple locations where author info might be
+            # Strategy 1: Look in the specific author section
+            author_container = section.find('div', class_=lambda c: c and 'cl' in (c.split() if c else []))
+            if author_container:
+                author_span = author_container.find('span', class_=lambda c: c and 'ct' in (c.split() if c else []))
+                if author_span and author_span.find('a'):
+                    article['Author'] = author_span.find('a').get_text(strip=True)
+            
+            # Strategy 2: Look for any author-like spans if not found
+            if 'Author' not in article:
+                author_spans = section.find_all('span', class_=lambda c: c and 'aw' in (c.split() if c else []))
+                for span in author_spans:
+                    if span.find('a') and not span.find('span', class_=lambda c: c and 'in' in (c.split() if c else [])):
+                        article['Author'] = span.find('a').get_text(strip=True)
+                        break
+            
+            # Extract article link - using multiple strategies
+            # Strategy 1: Find link containing the article title
+            if title_elem:
+                link_parent = title_elem.find_parent('a')
+                if link_parent and 'href' in link_parent.attrs:
+                    article['Link'] = link_parent['href']
+            
+            # Strategy 2: Look in the main content div
+            if 'Link' not in article:
+                content_div = section.find('div', class_=lambda c: c and 'di' in (c.split() if c else []))
+                if content_div:
+                    link_elem = content_div.find('a', class_='ag')
+                    if link_elem and 'href' in link_elem.attrs:
+                        article['Link'] = link_elem['href']
+            
+            # Only add articles with at least title and link
+            if article.get('Article Name') and article.get('Link'):
+                # Set default author if not found
+                if 'Author' not in article:
+                    article['Author'] = "Unknown"
+                
+                articles.append(article)
+    
+    except Exception as e:
+        # If parsing fails, return empty list
+        print(f"Error parsing Medium Daily Digest: {str(e)}")
+        return []
+    
+    return articles
+
+# Helper Functions
 def _format_message(msg):
     """
     Extract and format key components from a Gmail API message object.
     
     This function processes the complex Gmail API message format, extracting metadata
     from headers and decoding the message body from base64. It handles both single-part
-    and multi-part MIME messages, prioritizing plain text content when available.
+    and multi-part MIME messages.
+    
+    Processing details:
+    - Header information (subject, from, to, date) is extracted directly
+    - Message body is prioritized in this order:
+      1. HTML content (when available)
+      2. Plain text content (when HTML is not available)
+    - No conversion to markdown is performed for any fields
     
     Args:
         msg: Raw Gmail API message object containing nested payload structure
@@ -172,21 +303,41 @@ def _format_message(msg):
             - from: Sender email address and name
             - to: Recipient email address(es)
             - date: Timestamp of the message
-            - body: Decoded plain text content of the email
+            - body: Decoded content of the email (HTML format when available)
     """
     # Extract header information
     headers = {}
     for header in msg['payload']['headers']:
         headers[header['name']] = header['value']
     
-    # Extract body parts and content
-    body = ""
-    if 'parts' in msg['payload']:
-        for part in msg['payload']['parts']:
-            if part['mimeType'] == 'text/plain':
-                body = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
-                break
-    elif 'body' in msg['payload'] and 'data' in msg['payload']['body']:
+    # Extract body parts and content - prioritize HTML content
+    body_html = ""
+    body_plain = ""
+    
+    # Function to recursively extract MIME parts
+    def extract_parts(payload):
+        nonlocal body_html, body_plain
+        
+        # Check if this is a multipart message
+        if 'parts' in payload:
+            for part in payload['parts']:
+                extract_parts(part)
+        
+        # Check the MIME type and extract content
+        mime_type = payload.get('mimeType', '')
+        if mime_type == 'text/html' and 'body' in payload and 'data' in payload['body']:
+            body_html = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+        elif mime_type == 'text/plain' and 'body' in payload and 'data' in payload['body']:
+            body_plain = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
+    
+    # Start extraction with the main payload
+    extract_parts(msg['payload'])
+    
+    # Prioritize HTML body, fall back to plain text
+    body = body_html if body_html else body_plain
+    
+    # If still no body content, check for simple body structure
+    if not body and 'body' in msg['payload'] and 'data' in msg['payload']['body']:
         body = base64.urlsafe_b64decode(msg['payload']['body']['data']).decode('utf-8')
     
     return {
