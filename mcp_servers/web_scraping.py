@@ -24,6 +24,184 @@ os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 # Defining Tools
 @mcp.tool()
+async def validate_medium_cookies() -> dict:
+    """
+    Validates if the saved Medium cookies are still valid.
+    
+    This tool checks if the Medium cookie file exists, contains valid cookie data,
+    and if the cookies still provide authenticated access to Medium.com. It navigates
+    to Medium.com with the saved cookies and checks for elements that indicate a logged-in
+    state.
+    
+    No parameters are required for this tool.
+    
+    Returns:
+        dict: A dictionary containing:
+            - "valid": Boolean indicating if the cookies are valid
+            - "error": Error message if validation failed, None otherwise
+            - "debug_info": Dictionary containing debugging information (when DEBUG_MODE is True)
+    """
+    debug_info = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "cookies_file": MEDIUM_COOKIES_FILE,
+        "file_exists": False,
+        "cookies_loaded": False,
+        "cookie_count": 0,
+        "screenshots": [],
+        "process_steps": [],
+        "errors": []
+    }
+    
+    def add_debug_step(step_name, details=None):
+        step_info = {
+            "step": step_name,
+            "time": datetime.datetime.now().isoformat(),
+        }
+        if details:
+            step_info["details"] = details
+        debug_info["process_steps"].append(step_info)
+    
+    add_debug_step("start_validation")
+    
+    # Check if cookie file exists
+    if not os.path.exists(MEDIUM_COOKIES_FILE):
+        error_msg = f"Cookie file not found at {MEDIUM_COOKIES_FILE}"
+        debug_info["errors"].append(error_msg)
+        add_debug_step("file_check_failed", {"error": error_msg})
+        return {
+            "valid": False, 
+            "error": error_msg,
+            "debug_info": debug_info if DEBUG_MODE else None
+        }
+    
+    debug_info["file_exists"] = True
+    add_debug_step("file_exists")
+    
+    # Load cookies
+    try:
+        with open(MEDIUM_COOKIES_FILE, "r") as f:
+            cookies = json.load(f)
+            
+        if not cookies or len(cookies) == 0:
+            error_msg = "Cookie file exists but contains no cookies"
+            debug_info["errors"].append(error_msg)
+            add_debug_step("empty_cookies", {"error": error_msg})
+            return {
+                "valid": False, 
+                "error": error_msg,
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
+            
+        debug_info["cookies_loaded"] = True
+        debug_info["cookie_count"] = len(cookies)
+        add_debug_step("cookies_loaded", {"count": len(cookies)})
+    except Exception as e:
+        error_msg = f"Error loading cookies: {str(e)}"
+        debug_info["errors"].append(error_msg)
+        add_debug_step("loading_failed", {"error": error_msg})
+        return {
+            "valid": False, 
+            "error": error_msg,
+            "debug_info": debug_info if DEBUG_MODE else None
+        }
+    
+    # Validate cookies with Playwright
+    add_debug_step("initializing_playwright")
+    async with async_playwright() as p:
+        try:
+            browser = await p.chromium.launch(headless=True)  # Use headless mode for validation
+            add_debug_step("browser_launched")
+            
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+            )
+            add_debug_step("context_created")
+            
+            # Add the cookies to the context
+            await context.add_cookies(cookies)
+            add_debug_step("cookies_added_to_context")
+            
+            # Create a new page
+            page = await context.new_page()
+            add_debug_step("page_created")
+            
+            try:
+                add_debug_step("navigating_to_medium")
+                await page.goto("https://medium.com", wait_until="networkidle")
+                
+                # Check if we're logged in
+                auth_indicators = [
+                    'button[aria-label="User"]',
+                    'img.avatar',
+                    'a[href*="/@"]',
+                    'button:has-text("Write")',
+                    'div[data-testid="user-menu"]'
+                ]
+                
+                logged_in = False
+                found_selector = None
+                
+                for selector in auth_indicators:
+                    try:
+                        if await page.locator(selector).count() > 0 and await page.locator(selector).is_visible():
+                            logged_in = True
+                            found_selector = selector
+                            add_debug_step("authentication_confirmed", {"selector": selector})
+                            break
+                    except Exception as e:
+                        add_debug_step("selector_check_failed", {"selector": selector, "error": str(e)})
+                
+                # Take a screenshot for debugging
+                now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = f"{SCREENSHOTS_DIR}/cookie_validation_{now}.png"
+                await page.screenshot(path=screenshot_path)
+                debug_info["screenshots"].append(screenshot_path)
+                add_debug_step("screenshot_taken", {"path": screenshot_path})
+                
+                if logged_in:
+                    add_debug_step("validation_successful")
+                    return {
+                        "valid": True, 
+                        "error": None,
+                        "debug_info": debug_info if DEBUG_MODE else None
+                    }
+                else:
+                    error_msg = "Cookie validation failed - Not logged into Medium"
+                    debug_info["errors"].append(error_msg)
+                    add_debug_step("validation_failed", {"error": error_msg})
+                    return {
+                        "valid": False, 
+                        "error": error_msg,
+                        "debug_info": debug_info if DEBUG_MODE else None
+                    }
+                    
+            except Exception as e:
+                error_msg = f"Error during validation: {str(e)}"
+                debug_info["errors"].append(error_msg)
+                add_debug_step("validation_exception", {"error": error_msg})
+                return {
+                    "valid": False, 
+                    "error": error_msg,
+                    "debug_info": debug_info if DEBUG_MODE else None
+                }
+            finally:
+                await page.close()
+                add_debug_step("page_closed")
+        except Exception as e:
+            error_msg = f"Browser automation error: {str(e)}"
+            debug_info["errors"].append(error_msg)
+            add_debug_step("browser_error", {"error": error_msg})
+            return {
+                "valid": False, 
+                "error": error_msg,
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
+        finally:
+            if 'browser' in locals():
+                await browser.close()
+                add_debug_step("browser_closed")
+
+@mcp.tool()
 async def scrape_medium_article_content(short_url: str) -> dict:
     """
     Scrapes a Medium article for its full content using browser automation with Playwright.
