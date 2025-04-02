@@ -379,6 +379,51 @@ async def run():
             await session.initialize()
             logger.info("Successfully connected to Web Scraping MCP server!")
 
+            # log medium environment variables
+            logger.info(f"MEDIUM_EMAIL: {os.getenv('MEDIUM_EMAIL')}")
+            logger.info(f"MEDIUM_PASSWORD: {os.getenv('MEDIUM_PASSWORD')}") 
+            logger.info(f"MEDIUM_COOKIES_FILE: {os.getenv('MEDIUM_COOKIES_FILE')}")
+
+            # Check if articles were retrieved from the Gmail MCP server
+            if 'articles' in locals() and articles:
+                # Process the first article from the list
+                if len(articles) > 0:
+                    selected_article = articles[0]  # You can modify this to process multiple articles
+                    article_url = selected_article.get("Link")
+                    article_name = selected_article.get("Article Name")
+                    
+                    logger.info(f"Processing article: {article_name}")
+                    logger.info(f"Article URL: {article_url}")
+                    
+                    # Call the scrape_medium_article_content tool to get the article content
+                    tool_response = await session.call_tool("scrape_medium_article_content", arguments={"short_url": article_url})
+                    
+                    # Extract the article content from the tool response
+                    if tool_response.content and len(tool_response.content) > 0:
+                        json_str = tool_response.content[0].text
+                        try:
+                            article_content = json.loads(json_str)
+                            
+                            logger.info("Successfully scraped article content")
+                            logger.info(f"Article title: {article_content.get('Name')}")
+                            logger.info(f"Content length: {len(article_content.get('Scraped text', ''))}")
+                            logger.info(f"Number of images: {len(article_content.get('Images', []))}")
+                            
+                            # Here you can add code to process the article content further
+                            # For example, you could summarize it with Claude, extract key points, etc.
+                            
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse article content: {e}")
+                            logger.error(f"Raw response: {json_str[:500]}...")
+                    else:
+                        logger.error("Empty response from scrape_medium_article_content tool")
+                else:
+                    logger.warning("No articles retrieved from Medium Daily Digest")
+            else:
+                logger.warning("No articles available to process")
+                
+            logger.info("Web scraping process completed")
+
 if __name__ == "__main__":
     asyncio.run(run())
 
