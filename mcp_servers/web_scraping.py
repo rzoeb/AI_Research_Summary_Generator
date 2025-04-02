@@ -6,6 +6,7 @@ import json
 from urllib.parse import urlparse, urlunparse
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
+import datetime
 
 # Initialize the MCP server
 mcp = FastMCP("Web Scraping MCP Server")
@@ -14,6 +15,11 @@ mcp = FastMCP("Web Scraping MCP Server")
 MEDIUM_EMAIL = os.getenv("MEDIUM_EMAIL", "your-email@example.com")
 MEDIUM_PASSWORD = os.getenv("MEDIUM_PASSWORD", "your-password")
 MEDIUM_COOKIES_FILE = os.getenv("MEDIUM_COOKIES_FILE", "medium_cookies.json")
+DEBUG_MODE = True  # Set to True to enable detailed debugging information
+
+# Create screenshots directory if it doesn't exist
+SCREENSHOTS_DIR = "debugging_screenshots"
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 # Defining Tools
 @mcp.tool()
@@ -57,71 +63,235 @@ def scrape_medium_article_content(short_url: str) -> dict:
         - Browser/Playwright error:
           {"error": "Browser automation error: [details]"}
     """
+    # Initialize debugging info
+    debug_info = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "url": short_url,
+        "screenshots": [],
+        "process_steps": [],
+        "cookies_saved": False,
+        "cookies_loaded": False,
+        "login_attempted": False,
+        "login_successful": False,
+        "page_title": None,
+        "html_content_length": 0,
+        "errors": []
+    }
+    
+    def add_debug_step(step_name, details=None):
+        step_info = {
+            "step": step_name,
+            "time": datetime.datetime.now().isoformat(),
+        }
+        if details:
+            step_info["details"] = details
+        debug_info["process_steps"].append(step_info)
+    
     try:
+        add_debug_step("start", {"url": short_url})
+        
         # Validate URL format
         if not short_url or not isinstance(short_url, str):
-            return {"error": "Invalid URL: URL must be a non-empty string"}
+            debug_info["errors"].append("Invalid URL: URL must be a non-empty string")
+            return {
+                "error": "Invalid URL: URL must be a non-empty string", 
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
         
         parts = urlparse(short_url)
         if not parts.scheme or not parts.netloc:
-            return {"error": "Invalid URL: Missing scheme or domain"}
+            debug_info["errors"].append("Invalid URL: Missing scheme or domain")
+            return {
+                "error": "Invalid URL: Missing scheme or domain", 
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
         
         # Initialize playwright and scrape the article
+        add_debug_step("initializing_playwright")
         with sync_playwright() as p:
             try:
-                browser = p.chromium.launch(headless=True)  # Use headless=True for production
+                # Use non-headless mode for debugging
+                browser = p.chromium.launch(headless=False)
+                add_debug_step("browser_launched", {"headless": False})
+                
                 context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36"
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
                 )
+                add_debug_step("context_created")
                 
                 # Attempt to restore session from cookies; if unavailable, perform login
-                login_status = {"authenticated": False, "error": None}
-                if not _load_cookies(context):
+                cookies_loaded = _load_cookies(context)
+                debug_info["cookies_loaded"] = cookies_loaded
+                add_debug_step("cookies_load_attempt", {"success": cookies_loaded})
+                
+                if not cookies_loaded:
+                    add_debug_step("login_required")
                     page = context.new_page()
+                    debug_info["login_attempted"] = True
+                    
+                    # Take screenshot at the beginning
+                    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    screenshot_path = f"{SCREENSHOTS_DIR}/login_start_{now}.png"
+                    page.screenshot(path=screenshot_path)
+                    debug_info["screenshots"].append(screenshot_path)
+                    
                     try:
-                        login_status = _login_medium(page)
-                        if login_status["authenticated"]:
-                            _save_cookies(context)
+                        login_result = _login_medium(page)
+                        debug_info["login_successful"] = login_result["authenticated"]
+                        add_debug_step("login_attempt", login_result)
+                        
+                        if login_result["authenticated"]:
+                            cookies_saved = _save_cookies(context)
+                            debug_info["cookies_saved"] = cookies_saved
+                            add_debug_step("cookies_saved", {"success": cookies_saved})
                         else:
-                            return {"error": f"Failed to authenticate with Medium: {login_status['error']}"}
+                            debug_info["errors"].append(f"Failed to authenticate with Medium: {login_result['error']}")
+                            # Take a screenshot of the failed login state
+                            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            screenshot_path = f"{SCREENSHOTS_DIR}/login_failed_{now}.png"
+                            page.screenshot(path=screenshot_path)
+                            debug_info["screenshots"].append(screenshot_path)
+                            
+                            return {
+                                "error": f"Failed to authenticate with Medium: {login_result['error']}",
+                                "debug_info": debug_info if DEBUG_MODE else None
+                            }
                     except Exception as e:
-                        return {"error": f"Failed to authenticate with Medium: {str(e)}"}
+                        error_msg = str(e)
+                        debug_info["errors"].append(f"Login exception: {error_msg}")
+                        add_debug_step("login_exception", {"error": error_msg})
+                        
+                        # Take a screenshot of the error state
+                        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        screenshot_path = f"{SCREENSHOTS_DIR}/login_exception_{now}.png"
+                        page.screenshot(path=screenshot_path)
+                        debug_info["screenshots"].append(screenshot_path)
+                        
+                        return {
+                            "error": f"Failed to authenticate with Medium: {error_msg}",
+                            "debug_info": debug_info if DEBUG_MODE else None
+                        }
                     finally:
                         page.close()
+                        add_debug_step("login_page_closed")
                 
                 # Use a new page for scraping the article
+                add_debug_step("creating_article_page")
                 page = context.new_page()
+                
                 try:
-                    # Go directly to try accessing the article to confirm our authentication worked
-                    page.goto(short_url, wait_until="load")
-                    time.sleep(5)  # Allow time for dynamic content and scripts to load
+                    # Go directly to try accessing the article
+                    add_debug_step("navigating_to_article", {"url": short_url})
+                    page.goto(short_url, wait_until="networkidle")
+                    
+                    # Wait longer for dynamic content to load (10 seconds instead of 5)
+                    page.wait_for_load_state("networkidle")
+                    time.sleep(3)
+                    
+                    # Take a screenshot of what we're seeing
+                    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    screenshot_path = f"{SCREENSHOTS_DIR}/article_page_{now}.png"
+                    page.screenshot(path=screenshot_path)
+                    debug_info["screenshots"].append(screenshot_path)
+                    
+                    # Get page title
+                    page_title = page.title()
+                    debug_info["page_title"] = page_title
+                    add_debug_step("page_loaded", {"title": page_title})
                     
                     # Verify we're not on a login page or paywall
-                    if "sign in" in page.title().lower() or "become a member" in page.content().lower():
-                        return {"error": "Authentication failed: Redirected to login page or hit a paywall"}
+                    page_content = page.content()
+                    is_login_page = any(phrase in page_content.lower() 
+                                       for phrase in ["sign in", "become a member", "join medium"])
+                    
+                    if is_login_page:
+                        debug_info["errors"].append("Authentication failed: Redirected to login page or hit a paywall")
+                        add_debug_step("auth_check_failed", {"is_login_page": True})
+                        return {
+                            "error": "Authentication failed: Redirected to login page or hit a paywall",
+                            "debug_info": debug_info if DEBUG_MODE else None
+                        }
+                    
+                    add_debug_step("auth_check_passed", {"is_login_page": False})
                     
                     # Scrape the article content
+                    add_debug_step("scraping_article_content")
                     article_data = _scrape_medium_article(page, short_url)
                     
-                    # Validate the article data
+                    # Add debug information to article data
+                    debug_info["html_content_length"] = len(page.content())
+                    
+                    # Check for article content
                     if not article_data.get("Name"):
-                        return {"error": "Failed to extract article title"}
+                        debug_info["errors"].append("Failed to extract article title")
+                        add_debug_step("title_extraction_failed")
+                        
+                        # Take a screenshot of the page for debugging
+                        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        screenshot_path = f"{SCREENSHOTS_DIR}/title_extraction_failed_{now}.png"
+                        page.screenshot(path=screenshot_path)
+                        debug_info["screenshots"].append(screenshot_path)
                     
                     if not article_data.get("Scraped text"):
-                        return {"error": "Failed to extract article content"}
+                        debug_info["errors"].append("Failed to extract article content")
+                        add_debug_step("content_extraction_failed")
+                        
+                        # Take a screenshot of the page for debugging
+                        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        screenshot_path = f"{SCREENSHOTS_DIR}/content_extraction_failed_{now}.png"
+                        page.screenshot(path=screenshot_path)
+                        debug_info["screenshots"].append(screenshot_path)
+                    
+                    # Always include debug info in article data during debug mode
+                    if DEBUG_MODE:
+                        article_data["debug_info"] = debug_info
+                    
+                    add_debug_step("completed", {
+                        "has_title": bool(article_data.get("Name")),
+                        "content_length": len(article_data.get("Scraped text", "")),
+                        "image_count": len(article_data.get("Images", []))
+                    })
                     
                     return article_data
+                    
                 except Exception as e:
-                    return {"error": f"Failed to extract article content: {str(e)}"}
+                    error_msg = str(e)
+                    debug_info["errors"].append(f"Article extraction error: {error_msg}")
+                    add_debug_step("article_extraction_exception", {"error": error_msg})
+                    
+                    # Take a screenshot of the error state
+                    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    screenshot_path = f"{SCREENSHOTS_DIR}/article_extraction_error_{now}.png"
+                    page.screenshot(path=screenshot_path)
+                    debug_info["screenshots"].append(screenshot_path)
+                    
+                    return {
+                        "error": f"Failed to extract article content: {error_msg}",
+                        "debug_info": debug_info if DEBUG_MODE else None
+                    }
                 finally:
                     page.close()
+                    add_debug_step("article_page_closed")
             except Exception as e:
-                return {"error": f"Browser automation error: {str(e)}"}
+                error_msg = str(e)
+                debug_info["errors"].append(f"Browser automation error: {error_msg}")
+                add_debug_step("browser_automation_error", {"error": error_msg})
+                return {
+                    "error": f"Browser automation error: {error_msg}",
+                    "debug_info": debug_info if DEBUG_MODE else None
+                }
             finally:
                 if 'browser' in locals():
                     browser.close()
+                    add_debug_step("browser_closed")
     except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}"}
+        error_msg = str(e)
+        debug_info["errors"].append(f"Unexpected error: {error_msg}")
+        add_debug_step("unexpected_error", {"error": error_msg})
+        return {
+            "error": f"Unexpected error: {error_msg}",
+            "debug_info": debug_info if DEBUG_MODE else None
+        }
 
 # Helper Functions
 def _login_medium(page):
@@ -139,85 +309,447 @@ def _login_medium(page):
         dict: A status dictionary containing:
             - "authenticated": Boolean indicating if authentication was successful
             - "error": Error message string if authentication failed, None otherwise
+            - "debug": Dictionary containing debugging information
     """
+    debug = {
+        "steps": [],
+        "selectors_found": {},
+        "current_url": None,
+        "page_title": None
+    }
+    
+    def add_step(name, details=None):
+        step = {"name": name, "time": datetime.datetime.now().isoformat()}
+        if details:
+            step.update(details)
+        debug["steps"].append(step)
+        
     try:
+        # Save debug info about environment
+        add_step("environment", {
+            "email": MEDIUM_EMAIL[:3] + "..." + MEDIUM_EMAIL[-8:] if MEDIUM_EMAIL else "not_set",
+            "password_length": len(MEDIUM_PASSWORD) if MEDIUM_PASSWORD else 0,
+            "cookies_file": MEDIUM_COOKIES_FILE
+        })
+        
         # Navigate to the Medium homepage first
-        page.goto("https://medium.com", wait_until="load")
-        time.sleep(3)
+        add_step("navigating_to_medium_homepage")
+        # Use networkidle to ensure all resources are loaded
+        page.goto("https://medium.com", wait_until="networkidle")
+        debug["current_url"] = page.url
+        debug["page_title"] = page.title()
         
-        # Click the Sign In button in the top right
-        signin_button = page.locator('a:has-text("Sign In")').first
+        # Take a screenshot of the homepage
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        screenshot_path = f"{SCREENSHOTS_DIR}/medium_homepage_{now}.png"
+        page.screenshot(path=screenshot_path)
+        add_step("medium_homepage_screenshot", {"path": screenshot_path})
+        
+        # Wait for page to be fully loaded
+        page.wait_for_load_state("networkidle")
+        
+        # Check for sign-in button (try multiple selectors)
+        signin_selectors = [
+            'a:has-text("Sign In")',
+            'a[href*="sign-in"]',
+            'a[href*="signin"]',
+            'button:has-text("Sign in")'
+        ]
+        
+        signin_button = None
+        found_selector = None
+        
+        for selector in signin_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    signin_button = page.locator(selector).first
+                    found_selector = selector
+                    debug["selectors_found"]["signin_button"] = selector
+                    break
+            except Exception as e:
+                add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+        
         if not signin_button:
-            return {"authenticated": False, "error": "Sign In button not found"}
+            # Take a screenshot of the page when sign-in button not found
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/signin_button_not_found_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
+            
+            # Try to capture all available button text for debugging
+            buttons_text = []
+            for button in page.locator('button').all():
+                try:
+                    text = button.inner_text()
+                    if text.strip():
+                        buttons_text.append(text.strip())
+                except:
+                    pass
+                    
+            links_text = []
+            for link in page.locator('a').all():
+                try:
+                    text = link.inner_text()
+                    if text.strip():
+                        links_text.append(text.strip())
+                except:
+                    pass
+            
+            add_step("available_ui_elements", {
+                "buttons": buttons_text[:10],  # Limit to first 10 to avoid huge output
+                "links": links_text[:10]
+            })
+            
+            return {
+                "authenticated": False, 
+                "error": "Sign In button not found on Medium homepage",
+                "debug": debug
+            }
         
+        add_step("clicking_signin_button", {"selector_used": found_selector})
         signin_button.click()
-        time.sleep(2)
         
-        # Click on "Sign in with email" option
-        email_option = page.locator('button:has-text("Sign in with email")').first
+        # Use explicit wait rather than fixed sleep
+        page.wait_for_load_state("networkidle")
+        
+        # Take a screenshot after clicking sign-in
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        screenshot_path = f"{SCREENSHOTS_DIR}/after_signin_click_{now}.png"
+        page.screenshot(path=screenshot_path)
+        add_step("after_signin_click_screenshot", {"path": screenshot_path})
+        
+        debug["current_url"] = page.url
+        debug["page_title"] = page.title()
+        
+        # Check for "Sign in with email" option
+        email_option_selectors = [
+            'button:has-text("Sign in with email")',
+            'button[data-action="sign-in-with-email"]',
+            'button:has-text("Email")',
+            'a:has-text("sign in with email")'
+        ]
+        
+        email_option = None
+        found_selector = None
+        
+        for selector in email_option_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    email_option = page.locator(selector).first
+                    found_selector = selector
+                    debug["selectors_found"]["email_option"] = selector
+                    break
+            except Exception as e:
+                add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+        
         if not email_option:
-            # Try alternative selectors
-            email_option = page.locator('button[data-action="sign-in-with-email"]').first
-            if not email_option:
-                return {"authenticated": False, "error": "Email sign-in option not found"}
+            # Take a screenshot when email option not found
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/email_option_not_found_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("email_option_not_found_screenshot", {"path": screenshot_path})
+            
+            # Try to capture all available button text for debugging
+            buttons_text = []
+            for button in page.locator('button').all():
+                try:
+                    text = button.inner_text()
+                    if text.strip():
+                        buttons_text.append(text.strip())
+                except:
+                    pass
+            
+            add_step("available_buttons", {"buttons": buttons_text[:10]})
+            
+            return {
+                "authenticated": False, 
+                "error": "Email sign-in option not found",
+                "debug": debug
+            }
         
+        add_step("clicking_email_option", {"selector_used": found_selector})
         email_option.click()
-        time.sleep(2)
         
-        # Fill in the email address
-        email_field = page.locator('input[type="email"]').first
+        # Use explicit wait rather than fixed sleep
+        page.wait_for_load_state("networkidle")
+        
+        # Take a screenshot after clicking email option
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        screenshot_path = f"{SCREENSHOTS_DIR}/after_email_option_click_{now}.png"
+        page.screenshot(path=screenshot_path)
+        add_step("after_email_option_click_screenshot", {"path": screenshot_path})
+        
+        # Wait for the email input field to appear
+        # Use a more explicit wait for the email field
+        try:
+            page.wait_for_selector('input[type="email"]', state="visible", timeout=5000)
+        except:
+            # Try alternative selectors if the specific one fails
+            pass
+        
+        # Find email input field
+        email_field_selectors = [
+            'input[type="email"]',
+            'input[name="email"]',
+            'input[id*="email"]',
+            'input[placeholder*="email"]'
+        ]
+        
+        email_field = None
+        found_selector = None
+        
+        for selector in email_field_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    email_field = page.locator(selector).first
+                    found_selector = selector
+                    debug["selectors_found"]["email_field"] = selector
+                    break
+            except Exception as e:
+                add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+        
         if not email_field:
-            return {"authenticated": False, "error": "Email input field not found"}
+            # Take a screenshot when email field not found
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/email_field_not_found_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("email_field_not_found_screenshot", {"path": screenshot_path})
+            
+            return {
+                "authenticated": False, 
+                "error": "Email input field not found",
+                "debug": debug
+            }
         
+        add_step("filling_email_field", {"selector_used": found_selector, "email_length": len(MEDIUM_EMAIL)})
         email_field.fill(MEDIUM_EMAIL)
+        
+        # Give a short pause after filling
         time.sleep(1)
         
-        # Click continue
-        continue_button = page.locator('button:has-text("Continue")').first
+        # Find continue button
+        continue_button_selectors = [
+            'button:has-text("Continue")',
+            'button[type="submit"]',
+            'button.button--primary'
+        ]
+        
+        continue_button = None
+        found_selector = None
+        
+        for selector in continue_button_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    continue_button = page.locator(selector).first
+                    found_selector = selector
+                    debug["selectors_found"]["continue_button"] = selector
+                    break
+            except Exception as e:
+                add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+        
         if not continue_button:
-            return {"authenticated": False, "error": "Continue button not found"}
+            # Take a screenshot when continue button not found
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/continue_button_not_found_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("continue_button_not_found_screenshot", {"path": screenshot_path})
+            
+            return {
+                "authenticated": False, 
+                "error": "Continue button not found",
+                "debug": debug
+            }
         
+        add_step("clicking_continue_button", {"selector_used": found_selector})
         continue_button.click()
-        time.sleep(3)
         
-        # Check if password field appears (it should for most accounts)
-        password_field = page.locator('input[type="password"]').first
+        # Wait for the network to be idle
+        page.wait_for_load_state("networkidle")
+        
+        # Take a screenshot after clicking continue
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        screenshot_path = f"{SCREENSHOTS_DIR}/after_continue_click_{now}.png"
+        page.screenshot(path=screenshot_path)
+        add_step("after_continue_click_screenshot", {"path": screenshot_path})
+        
+        debug["current_url"] = page.url
+        debug["page_title"] = page.title()
+        
+        # Wait for page to stabilize
+        time.sleep(2)
+        
+        # Check for password field
+        password_field_selectors = [
+            'input[type="password"]',
+            'input[name="password"]',
+            'input[id*="password"]'
+        ]
+        
+        password_field = None
+        found_selector = None
+        
+        for selector in password_field_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    password_field = page.locator(selector).first
+                    found_selector = selector
+                    debug["selectors_found"]["password_field"] = selector
+                    break
+            except Exception as e:
+                add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+        
         if password_field:
+            add_step("filling_password_field", {
+                "selector_used": found_selector,
+                "password_length": len(MEDIUM_PASSWORD) if MEDIUM_PASSWORD else 0
+            })
             password_field.fill(MEDIUM_PASSWORD)
             time.sleep(1)
             
-            # Click sign in
-            signin_button = page.locator('button:has-text("Sign in")').first
-            if not signin_button:
-                return {"authenticated": False, "error": "Sign in button not found after password entry"}
+            # Find sign in button
+            signin_button_selectors = [
+                'button:has-text("Sign in")',
+                'button[type="submit"]',
+                'button.button--primary'
+            ]
             
+            signin_button = None
+            found_selector = None
+            
+            for selector in signin_button_selectors:
+                try:
+                    # Use proper count check instead of the object check
+                    if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                        signin_button = page.locator(selector).first
+                        found_selector = selector
+                        debug["selectors_found"]["password_signin_button"] = selector
+                        break
+                except Exception as e:
+                    add_step("selector_check_failed", {"selector": selector, "error": str(e)})
+            
+            if not signin_button:
+                # Take a screenshot when sign in button not found
+                now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = f"{SCREENSHOTS_DIR}/signin_button_not_found_{now}.png"
+                page.screenshot(path=screenshot_path)
+                add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
+                
+                return {
+                    "authenticated": False, 
+                    "error": "Sign in button not found after password entry",
+                    "debug": debug
+                }
+            
+            add_step("clicking_signin_button", {"selector_used": found_selector})
             signin_button.click()
-            time.sleep(5)
+            
+            # Wait for the network to be idle
+            page.wait_for_load_state("networkidle")
+            time.sleep(3)
+            
+            # Take a screenshot after clicking sign in
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/after_signin_password_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("after_signin_password_screenshot", {"path": screenshot_path})
+        else:
+            add_step("no_password_field_found", {"likely_using_email_link": True})
         
-        # Verify we're logged in by checking for user avatar or profile elements
-        # Try multiple possible elements that would indicate successful login
-        is_authenticated = False
-        selectors_to_try = [
+        # Verify login success by checking for user-specific elements
+        auth_check_selectors = [
             'button[aria-label="User"]',   # Current avatar button
             'img.avatar',                  # Avatar image
             'a[href*="/@"]',               # Profile link
-            'a[href="/me"]'                # "Me" link
+            'a[href="/me"]',               # "Me" link
+            'button:has-text("Write")',    # Write button (logged-in users)
+            'div[data-testid="user-menu"]' # User menu
         ]
         
-        for selector in selectors_to_try:
-            if page.locator(selector).count() > 0:
-                is_authenticated = True
-                break
+        is_authenticated = False
+        authenticated_selector = None
         
-        if not is_authenticated:
-            # Take screenshot for debugging
-            page.screenshot(path="medium_login_failed.png")
-            return {"authenticated": False, "error": "Could not verify successful login"}
+        for selector in auth_check_selectors:
+            try:
+                # Use proper count check instead of the object check
+                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    is_authenticated = True
+                    authenticated_selector = selector
+                    debug["selectors_found"]["auth_confirmation"] = selector
+                    break
+            except Exception as e:
+                add_step("auth_check_failed", {"selector": selector, "error": str(e)})
         
-        return {"authenticated": True, "error": None}
+        if is_authenticated:
+            add_step("authentication_successful", {"selector_found": authenticated_selector})
+            
+            # Take a screenshot of success state
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/login_success_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("login_success_screenshot", {"path": screenshot_path})
+            
+            return {"authenticated": True, "error": None, "debug": debug}
+        else:
+            add_step("authentication_failed")
+            
+            # Take a screenshot of failed state
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/login_failed_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("login_failed_screenshot", {"path": screenshot_path})
+            
+            # Additional check: See if there's an error message
+            error_message = ""
+            try:
+                for error_selector in ['.error-message', '.form-error', '.errorMessage']:
+                    if page.locator(error_selector).count() > 0:
+                        error_message = page.locator(error_selector).first.inner_text()
+                        add_step("error_message_found", {"message": error_message})
+                        break
+            except:
+                pass
+            
+            # Check if we got redirected to a verify page (2FA)
+            if "verify" in page.url.lower():
+                return {
+                    "authenticated": False, 
+                    "error": "Two-factor authentication required. Manual login needed.",
+                    "debug": debug
+                }
+            
+            # Check for CAPTCHA - this would require human intervention
+            if "captcha" in page.content().lower():
+                return {
+                    "authenticated": False, 
+                    "error": "CAPTCHA detected. Manual login required.",
+                    "debug": debug
+                }
+            
+            return {
+                "authenticated": False, 
+                "error": f"Could not verify successful login. {error_message}",
+                "debug": debug
+            }
         
     except Exception as e:
-        return {"authenticated": False, "error": str(e)}
+        error_msg = str(e)
+        add_step("exception", {"error": error_msg})
+        
+        # Take a screenshot of the exception state
+        try:
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/login_exception_{now}.png"
+            page.screenshot(path=screenshot_path)
+            add_step("exception_screenshot", {"path": screenshot_path})
+        except:
+            pass
+        
+        return {"authenticated": False, "error": error_msg, "debug": debug}
 
 def _save_cookies(context):
     """
@@ -235,8 +767,23 @@ def _save_cookies(context):
     """
     try:
         cookies = context.cookies()
+        
+        # Check if we actually have cookies to save
+        if not cookies or len(cookies) == 0:
+            return False
+            
+        # Try to save cookies
+        cookie_dir = os.path.dirname(MEDIUM_COOKIES_FILE)
+        if cookie_dir and not os.path.exists(cookie_dir):
+            os.makedirs(cookie_dir, exist_ok=True)
+            
         with open(MEDIUM_COOKIES_FILE, "w") as f:
             json.dump(cookies, f)
+            
+        # Verify file was created
+        if not os.path.exists(MEDIUM_COOKIES_FILE):
+            return False
+            
         return True
     except Exception as e:
         return False
@@ -261,7 +808,12 @@ def _load_cookies(context):
             
         with open(MEDIUM_COOKIES_FILE, "r") as f:
             cookies = json.load(f)
-            context.add_cookies(cookies)
+            
+        # Check if we have valid cookies
+        if not cookies or len(cookies) == 0:
+            return False
+            
+        context.add_cookies(cookies)
         return True
     except Exception:
         return False
@@ -318,43 +870,88 @@ def _scrape_medium_article(page, short_url):
             - 'Scraped text': The plain text content of the article with image placeholders inserted.
             - 'Images': A list of image URLs extracted from the article (for reference).
     """
-    # Get the article title
+    # Get the article title (strip " | Medium" suffix if present)
     article_name = page.title()
+    if article_name and " | Medium" in article_name:
+        article_name = article_name.split(" | Medium")[0]
+    
+    # Debug info for article extraction
+    article_debug = {
+        "title": article_name,
+        "url": page.url,
+        "content_length": len(page.content()),
+        "selectors_tried": []
+    }
     
     # Find the article element - try multiple selectors that might match Medium's structure
     article_selectors = [
         "article",
         "div[role='article']",
+        "section.pw-post-body",
         "section[role='main']",
-        "div.story"
+        "div.story",
+        "div.meteredContent",
+        "div.postArticle-content",
+        "div.section-inner"
     ]
     
     article_html = ""
     for selector in article_selectors:
-        if page.locator(selector).count() > 0:
-            article_html = page.locator(selector).first.inner_html()
-            break
+        try:
+            if page.locator(selector).count() > 0:
+                article_html = page.locator(selector).first.inner_html()
+                article_debug["selectors_tried"].append({
+                    "selector": selector,
+                    "found": True,
+                    "content_length": len(article_html)
+                })
+                if article_html and len(article_html.strip()) > 0:
+                    break
+            else:
+                article_debug["selectors_tried"].append({
+                    "selector": selector,
+                    "found": False
+                })
+        except Exception as e:
+            article_debug["selectors_tried"].append({
+                "selector": selector,
+                "error": str(e)
+            })
     
     # If we still don't have article content, take body as fallback
     if not article_html:
-        article_html = page.inner_html("body")
+        try:
+            article_html = page.inner_html("body")
+            article_debug["using_body_fallback"] = True
+        except Exception as e:
+            article_debug["body_fallback_error"] = str(e)
     
     # Process the HTML to insert image placeholders in the correct locations.
     processed_text = _process_article_html(article_html)
     
     # Extract image URLs separately
     image_urls = []
-    images = page.locator("img").all()
-    for img in images:
-        src = img.get_attribute("src")
-        if src:
-            image_urls.append(src)
+    try:
+        images = page.locator("img").all()
+        for img in images:
+            try:
+                src = img.get_attribute("src")
+                if src:
+                    image_urls.append(src)
+            except:
+                pass
+    except Exception as e:
+        article_debug["image_extraction_error"] = str(e)
+    
+    article_debug["image_count"] = len(image_urls)
+    article_debug["processed_text_length"] = len(processed_text)
     
     return {
         "Name": article_name,
         "Link": short_url,
         "Scraped text": processed_text,
-        "Images": image_urls
+        "Images": image_urls,
+        "article_debug": article_debug if DEBUG_MODE else None
     }
 
 # Ensure the MCP server is exposed properly
@@ -367,13 +964,14 @@ if __name__ == "__main__":
 # @mcp.resource("article://{url}")
 # def get_article_info(url: str) -> str:
 #     """Get information about an article at the given URL."""
-#     return f"Article at {url}!"
+
 
 # # Defining Resources - Placeholder
 # @mcp.resource("config://app")
 # def get_standard_greeting() -> str:
 #     """App configuration message."""
 #     return "Hello, World!"
+
 
 # # Defining Prompts - Placeholder
 # @mcp.prompt()
