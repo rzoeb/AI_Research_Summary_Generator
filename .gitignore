@@ -6,6 +6,9 @@ gmail_client_secrets_web.json
 token.pickle
 token_web.pickle
 
+# Medium Cookies
+medium_cookies.json
+
 # Python specific stuff
 # Byte-compiled / optimized / DLL files
 __pycache__/
