@@ -135,9 +135,22 @@ async def validate_medium_cookies() -> dict:
                     'img.avatar',
                     'a[href*="/@"]',
                     'button:has-text("Write")',
-                    'div[data-testid="user-menu"]'
+                    'div[data-testid="user-menu"]',
+                    # Additional selectors that are more resilient to UI changes
+                    'div[aria-label="Profile"]',
+                    'img[alt*="Profile picture"]',
+                    'button:has-text("Sign out")',
+                    'a[href="/me"]',
+                    'a[href="/me/stories"]',
+                    'a:has-text("Member")',
+                    'a:has-text("profile")',
+                    # More general checks - any of these would indicate a logged-in state
+                    'button:has-text("Notifications")',
+                    'button:has-text("Lists")',
+                    'button:has-text("Stories")'
                 ]
                 
+                # Add HTML content check as fallback if selectors fail
                 logged_in = False
                 found_selector = None
                 
@@ -150,6 +163,24 @@ async def validate_medium_cookies() -> dict:
                             break
                     except Exception as e:
                         add_debug_step("selector_check_failed", {"selector": selector, "error": str(e)})
+                
+                # Fallback check: Look for logged-in indicators in the page content if selectors didn't work
+                if not logged_in:
+                    add_debug_step("trying_content_based_check")
+                    page_content = await page.content()
+                    logged_in_indicators = [
+                        "Sign out",
+                        "Your stories",
+                        "Your profile",
+                        "Account settings",
+                        "Write a story"
+                    ]
+                    
+                    for indicator in logged_in_indicators:
+                        if indicator.lower() in page_content.lower():
+                            logged_in = True
+                            add_debug_step("content_check_authenticated", {"indicator": indicator})
+                            break
                 
                 # Take a screenshot for debugging
                 now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1005,29 +1036,86 @@ def _process_article_html(html):
     This function parses the article's HTML content using BeautifulSoup and traverses the document.
     When it encounters an <img> tag, it replaces the tag with a placeholder string in the format:
     "[IMG: image_url]". The function then returns a plain text representation of the article with
-    these inline placeholders. This preserves the relative ordering of text and images for subsequent
-    processing by an LLM.
+    these inline placeholders and a list of image URLs found in the article content.
     
     Args:
         html (str): The HTML content of the article.
     
     Returns:
-        str: A plain text representation of the article where image tags are replaced by placeholders
-             indicating the image URL.
+        tuple: A tuple containing:
+            - str: Plain text with image placeholders
+            - list: List of image URLs found in the article content
     """
     if not html or len(html.strip()) == 0:
-        return ""
+        return "", []
         
     soup = BeautifulSoup(html, "html.parser")
+    image_urls = []
     
-    # Replace each image tag with a placeholder containing its 'src' attribute.
+    # Replace each image tag with a placeholder containing its 'src' attribute
+    # and collect article image URLs simultaneously
     for img in soup.find_all("img"):
         src = img.get("src")
-        placeholder = f"[IMG: {src}]"
-        img.replace_with(placeholder)
+        if src:
+            # Filter to include only meaningful article images (exclude tiny UI elements)
+            # Medium article images typically have specific URL patterns or size attributes
+            is_article_image = False
+            
+            # Check image URL patterns common for Medium article content images
+            medium_image_patterns = [
+                "miro.medium.com",
+                "/resize:",
+                "/max/",
+                "/fit:",
+                "/progressive:"
+            ]
+            
+            if any(pattern in src for pattern in medium_image_patterns):
+                is_article_image = True
+            
+            # Check image dimensions via attributes (if available)
+            # Medium article images are typically larger than UI elements
+            try:
+                width = img.get('width')
+                height = img.get('height')
+                if width and height:
+                    # Convert to integers if they're strings
+                    if isinstance(width, str) and width.isdigit():
+                        width = int(width)
+                    if isinstance(height, str) and height.isdigit():
+                        height = int(height)
+                    
+                    # If dimensions suggest it's a substantial image, include it
+                    if (isinstance(width, int) and isinstance(height, int) and 
+                            width > 100 and height > 100):
+                        is_article_image = True
+            except:
+                pass
+                
+            # Check parent elements - article images are often in specific containers
+            parent_classes = []
+            parent = img.parent
+            for _ in range(3):  # Check up to 3 levels up
+                if parent and parent.get('class'):
+                    parent_classes.extend(parent.get('class'))
+                if parent:
+                    parent = parent.parent
+                    
+            article_content_classes = ['graf-image', 'section-image', 'post-image', 'progressiveMedia']
+            if any(cls in parent_classes for cls in article_content_classes):
+                is_article_image = True
+                
+            # Replace with placeholder only if it's identified as an article image
+            if is_article_image:
+                placeholder = f"[IMG: {src}]"
+                image_urls.append(src)
+                img.replace_with(placeholder)
+            else:
+                # Remove non-article images without creating placeholders
+                img.replace_with("")
     
-    # Use a space as a separator to ensure text elements remain separated.
-    return soup.get_text(separator=" ", strip=True)
+    # Use a space as a separator to ensure text elements remain separated
+    return soup.get_text(separator=" ", strip=True), image_urls
 
 async def _scrape_medium_article(page, short_url):
     """
@@ -1037,6 +1125,7 @@ async def _scrape_medium_article(page, short_url):
       - The article's title (from the page title)
       - The article's full text with inline image placeholders embedded at the specific locations
         where images originally appear (by processing the inner HTML of the <article> element)
+      - A list of image URLs that are actually part of the article content (not UI elements)
     
     Args:
         page: The Playwright page instance used to navigate and extract content.
@@ -1048,7 +1137,7 @@ async def _scrape_medium_article(page, short_url):
             - 'Name': The title of the article.
             - 'Link': The canonical URL of the article.
             - 'Scraped text': The plain text content of the article with image placeholders inserted.
-            - 'Images': A list of image URLs extracted from the article (for reference).
+            - 'Images': A list of article image URLs extracted from the article content.
     """
     # Get the article title (strip " | Medium" suffix if present)
     article_name = await page.title()
@@ -1106,31 +1195,17 @@ async def _scrape_medium_article(page, short_url):
         except Exception as e:
             article_debug["body_fallback_error"] = str(e)
     
-    # Process the HTML to insert image placeholders in the correct locations.
-    processed_text = _process_article_html(article_html)
+    # Process the HTML to insert image placeholders and get article image URLs
+    processed_text, article_image_urls = _process_article_html(article_html)
     
-    # Extract image URLs separately
-    image_urls = []
-    try:
-        images = await page.locator("img").all()
-        for img in images:
-            try:
-                src = await img.get_attribute("src")
-                if src:
-                    image_urls.append(src)
-            except:
-                pass
-    except Exception as e:
-        article_debug["image_extraction_error"] = str(e)
-    
-    article_debug["image_count"] = len(image_urls)
+    article_debug["article_image_count"] = len(article_image_urls)
     article_debug["processed_text_length"] = len(processed_text)
     
     return {
         "Name": article_name,
         "Link": short_url,
         "Scraped text": processed_text,
-        "Images": image_urls,
+        "Images": article_image_urls,  # Now using only article images from processed content
         "article_debug": article_debug if DEBUG_MODE else None
     }
 
