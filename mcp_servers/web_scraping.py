@@ -3,10 +3,11 @@ from mcp.server.fastmcp.prompts import base
 import os
 import time
 import json
-from urllib.parse import urlparse, urlunparse
-from playwright.sync_api import sync_playwright
+from urllib.parse import urlparse
+from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 import datetime
+import asyncio
 
 # Initialize the MCP server
 mcp = FastMCP("Web Scraping MCP Server")
@@ -23,7 +24,7 @@ os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 # Defining Tools
 @mcp.tool()
-def scrape_medium_article_content(short_url: str) -> dict:
+async def scrape_medium_article_content(short_url: str) -> dict:
     """
     Scrapes a Medium article for its full content using browser automation with Playwright.
     
@@ -108,40 +109,40 @@ def scrape_medium_article_content(short_url: str) -> dict:
         
         # Initialize playwright and scrape the article
         add_debug_step("initializing_playwright")
-        with sync_playwright() as p:
+        async with async_playwright() as p:
             try:
                 # Use non-headless mode for debugging
-                browser = p.chromium.launch(headless=False)
+                browser = await p.chromium.launch(headless=False)
                 add_debug_step("browser_launched", {"headless": False})
                 
-                context = browser.new_context(
+                context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
                 )
                 add_debug_step("context_created")
                 
                 # Attempt to restore session from cookies; if unavailable, perform login
-                cookies_loaded = _load_cookies(context)
+                cookies_loaded = await _load_cookies(context)
                 debug_info["cookies_loaded"] = cookies_loaded
                 add_debug_step("cookies_load_attempt", {"success": cookies_loaded})
                 
                 if not cookies_loaded:
                     add_debug_step("login_required")
-                    page = context.new_page()
+                    page = await context.new_page()
                     debug_info["login_attempted"] = True
                     
                     # Take screenshot at the beginning
                     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     screenshot_path = f"{SCREENSHOTS_DIR}/login_start_{now}.png"
-                    page.screenshot(path=screenshot_path)
+                    await page.screenshot(path=screenshot_path)
                     debug_info["screenshots"].append(screenshot_path)
                     
                     try:
-                        login_result = _login_medium(page)
+                        login_result = await _login_medium(page)
                         debug_info["login_successful"] = login_result["authenticated"]
                         add_debug_step("login_attempt", login_result)
                         
                         if login_result["authenticated"]:
-                            cookies_saved = _save_cookies(context)
+                            cookies_saved = await _save_cookies(context)
                             debug_info["cookies_saved"] = cookies_saved
                             add_debug_step("cookies_saved", {"success": cookies_saved})
                         else:
@@ -149,7 +150,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                             # Take a screenshot of the failed login state
                             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                             screenshot_path = f"{SCREENSHOTS_DIR}/login_failed_{now}.png"
-                            page.screenshot(path=screenshot_path)
+                            await page.screenshot(path=screenshot_path)
                             debug_info["screenshots"].append(screenshot_path)
                             
                             return {
@@ -164,7 +165,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                         # Take a screenshot of the error state
                         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         screenshot_path = f"{SCREENSHOTS_DIR}/login_exception_{now}.png"
-                        page.screenshot(path=screenshot_path)
+                        await page.screenshot(path=screenshot_path)
                         debug_info["screenshots"].append(screenshot_path)
                         
                         return {
@@ -172,35 +173,35 @@ def scrape_medium_article_content(short_url: str) -> dict:
                             "debug_info": debug_info if DEBUG_MODE else None
                         }
                     finally:
-                        page.close()
+                        await page.close()
                         add_debug_step("login_page_closed")
                 
                 # Use a new page for scraping the article
                 add_debug_step("creating_article_page")
-                page = context.new_page()
+                page = await context.new_page()
                 
                 try:
                     # Go directly to try accessing the article
                     add_debug_step("navigating_to_article", {"url": short_url})
-                    page.goto(short_url, wait_until="networkidle")
+                    await page.goto(short_url, wait_until="networkidle")
                     
-                    # Wait longer for dynamic content to load (10 seconds instead of 5)
-                    page.wait_for_load_state("networkidle")
-                    time.sleep(3)
+                    # Wait longer for dynamic content to load
+                    await page.wait_for_load_state("networkidle")
+                    await asyncio.sleep(3)
                     
                     # Take a screenshot of what we're seeing
                     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     screenshot_path = f"{SCREENSHOTS_DIR}/article_page_{now}.png"
-                    page.screenshot(path=screenshot_path)
+                    await page.screenshot(path=screenshot_path)
                     debug_info["screenshots"].append(screenshot_path)
                     
                     # Get page title
-                    page_title = page.title()
+                    page_title = await page.title()
                     debug_info["page_title"] = page_title
                     add_debug_step("page_loaded", {"title": page_title})
                     
                     # Verify we're not on a login page or paywall
-                    page_content = page.content()
+                    page_content = await page.content()
                     is_login_page = any(phrase in page_content.lower() 
                                        for phrase in ["sign in", "become a member", "join medium"])
                     
@@ -216,10 +217,10 @@ def scrape_medium_article_content(short_url: str) -> dict:
                     
                     # Scrape the article content
                     add_debug_step("scraping_article_content")
-                    article_data = _scrape_medium_article(page, short_url)
+                    article_data = await _scrape_medium_article(page, short_url)
                     
                     # Add debug information to article data
-                    debug_info["html_content_length"] = len(page.content())
+                    debug_info["html_content_length"] = len(await page.content())
                     
                     # Check for article content
                     if not article_data.get("Name"):
@@ -229,7 +230,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                         # Take a screenshot of the page for debugging
                         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         screenshot_path = f"{SCREENSHOTS_DIR}/title_extraction_failed_{now}.png"
-                        page.screenshot(path=screenshot_path)
+                        await page.screenshot(path=screenshot_path)
                         debug_info["screenshots"].append(screenshot_path)
                     
                     if not article_data.get("Scraped text"):
@@ -239,7 +240,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                         # Take a screenshot of the page for debugging
                         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         screenshot_path = f"{SCREENSHOTS_DIR}/content_extraction_failed_{now}.png"
-                        page.screenshot(path=screenshot_path)
+                        await page.screenshot(path=screenshot_path)
                         debug_info["screenshots"].append(screenshot_path)
                     
                     # Always include debug info in article data during debug mode
@@ -262,7 +263,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                     # Take a screenshot of the error state
                     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     screenshot_path = f"{SCREENSHOTS_DIR}/article_extraction_error_{now}.png"
-                    page.screenshot(path=screenshot_path)
+                    await page.screenshot(path=screenshot_path)
                     debug_info["screenshots"].append(screenshot_path)
                     
                     return {
@@ -270,7 +271,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                         "debug_info": debug_info if DEBUG_MODE else None
                     }
                 finally:
-                    page.close()
+                    await page.close()
                     add_debug_step("article_page_closed")
             except Exception as e:
                 error_msg = str(e)
@@ -282,7 +283,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
                 }
             finally:
                 if 'browser' in locals():
-                    browser.close()
+                    await browser.close()
                     add_debug_step("browser_closed")
     except Exception as e:
         error_msg = str(e)
@@ -294,7 +295,7 @@ def scrape_medium_article_content(short_url: str) -> dict:
         }
 
 # Helper Functions
-def _login_medium(page):
+async def _login_medium(page):
     """
     Logs into Medium using provided credentials via a simulated user login flow.
     
@@ -335,18 +336,18 @@ def _login_medium(page):
         # Navigate to the Medium homepage first
         add_step("navigating_to_medium_homepage")
         # Use networkidle to ensure all resources are loaded
-        page.goto("https://medium.com", wait_until="networkidle")
+        await page.goto("https://medium.com", wait_until="networkidle")
         debug["current_url"] = page.url
-        debug["page_title"] = page.title()
+        debug["page_title"] = await page.title()
         
         # Take a screenshot of the homepage
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"{SCREENSHOTS_DIR}/medium_homepage_{now}.png"
-        page.screenshot(path=screenshot_path)
+        await page.screenshot(path=screenshot_path)
         add_step("medium_homepage_screenshot", {"path": screenshot_path})
         
         # Wait for page to be fully loaded
-        page.wait_for_load_state("networkidle")
+        await page.wait_for_load_state("networkidle")
         
         # Check for sign-in button (try multiple selectors)
         signin_selectors = [
@@ -362,7 +363,7 @@ def _login_medium(page):
         for selector in signin_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     signin_button = page.locator(selector).first
                     found_selector = selector
                     debug["selectors_found"]["signin_button"] = selector
@@ -374,23 +375,23 @@ def _login_medium(page):
             # Take a screenshot of the page when sign-in button not found
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/signin_button_not_found_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
             
             # Try to capture all available button text for debugging
             buttons_text = []
-            for button in page.locator('button').all():
+            for button in await page.locator('button').all():
                 try:
-                    text = button.inner_text()
+                    text = await button.inner_text()
                     if text.strip():
                         buttons_text.append(text.strip())
                 except:
                     pass
                     
             links_text = []
-            for link in page.locator('a').all():
+            for link in await page.locator('a').all():
                 try:
-                    text = link.inner_text()
+                    text = await link.inner_text()
                     if text.strip():
                         links_text.append(text.strip())
                 except:
@@ -408,19 +409,19 @@ def _login_medium(page):
             }
         
         add_step("clicking_signin_button", {"selector_used": found_selector})
-        signin_button.click()
+        await signin_button.click()
         
         # Use explicit wait rather than fixed sleep
-        page.wait_for_load_state("networkidle")
+        await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking sign-in
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"{SCREENSHOTS_DIR}/after_signin_click_{now}.png"
-        page.screenshot(path=screenshot_path)
+        await page.screenshot(path=screenshot_path)
         add_step("after_signin_click_screenshot", {"path": screenshot_path})
         
         debug["current_url"] = page.url
-        debug["page_title"] = page.title()
+        debug["page_title"] = await page.title()
         
         # Check for "Sign in with email" option
         email_option_selectors = [
@@ -436,7 +437,7 @@ def _login_medium(page):
         for selector in email_option_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     email_option = page.locator(selector).first
                     found_selector = selector
                     debug["selectors_found"]["email_option"] = selector
@@ -448,14 +449,14 @@ def _login_medium(page):
             # Take a screenshot when email option not found
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/email_option_not_found_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("email_option_not_found_screenshot", {"path": screenshot_path})
             
             # Try to capture all available button text for debugging
             buttons_text = []
-            for button in page.locator('button').all():
+            for button in await page.locator('button').all():
                 try:
-                    text = button.inner_text()
+                    text = await button.inner_text()
                     if text.strip():
                         buttons_text.append(text.strip())
                 except:
@@ -470,21 +471,21 @@ def _login_medium(page):
             }
         
         add_step("clicking_email_option", {"selector_used": found_selector})
-        email_option.click()
+        await email_option.click()
         
         # Use explicit wait rather than fixed sleep
-        page.wait_for_load_state("networkidle")
+        await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking email option
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"{SCREENSHOTS_DIR}/after_email_option_click_{now}.png"
-        page.screenshot(path=screenshot_path)
+        await page.screenshot(path=screenshot_path)
         add_step("after_email_option_click_screenshot", {"path": screenshot_path})
         
         # Wait for the email input field to appear
         # Use a more explicit wait for the email field
         try:
-            page.wait_for_selector('input[type="email"]', state="visible", timeout=5000)
+            await page.wait_for_selector('input[type="email"]', state="visible", timeout=5000)
         except:
             # Try alternative selectors if the specific one fails
             pass
@@ -503,7 +504,7 @@ def _login_medium(page):
         for selector in email_field_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     email_field = page.locator(selector).first
                     found_selector = selector
                     debug["selectors_found"]["email_field"] = selector
@@ -515,7 +516,7 @@ def _login_medium(page):
             # Take a screenshot when email field not found
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/email_field_not_found_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("email_field_not_found_screenshot", {"path": screenshot_path})
             
             return {
@@ -525,10 +526,10 @@ def _login_medium(page):
             }
         
         add_step("filling_email_field", {"selector_used": found_selector, "email_length": len(MEDIUM_EMAIL)})
-        email_field.fill(MEDIUM_EMAIL)
+        await email_field.fill(MEDIUM_EMAIL)
         
         # Give a short pause after filling
-        time.sleep(1)
+        await asyncio.sleep(1)
         
         # Find continue button
         continue_button_selectors = [
@@ -543,7 +544,7 @@ def _login_medium(page):
         for selector in continue_button_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     continue_button = page.locator(selector).first
                     found_selector = selector
                     debug["selectors_found"]["continue_button"] = selector
@@ -555,7 +556,7 @@ def _login_medium(page):
             # Take a screenshot when continue button not found
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/continue_button_not_found_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("continue_button_not_found_screenshot", {"path": screenshot_path})
             
             return {
@@ -565,22 +566,22 @@ def _login_medium(page):
             }
         
         add_step("clicking_continue_button", {"selector_used": found_selector})
-        continue_button.click()
+        await continue_button.click()
         
         # Wait for the network to be idle
-        page.wait_for_load_state("networkidle")
+        await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking continue
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"{SCREENSHOTS_DIR}/after_continue_click_{now}.png"
-        page.screenshot(path=screenshot_path)
+        await page.screenshot(path=screenshot_path)
         add_step("after_continue_click_screenshot", {"path": screenshot_path})
         
         debug["current_url"] = page.url
-        debug["page_title"] = page.title()
+        debug["page_title"] = await page.title()
         
         # Wait for page to stabilize
-        time.sleep(2)
+        await asyncio.sleep(2)
         
         # Check for password field
         password_field_selectors = [
@@ -595,7 +596,7 @@ def _login_medium(page):
         for selector in password_field_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     password_field = page.locator(selector).first
                     found_selector = selector
                     debug["selectors_found"]["password_field"] = selector
@@ -608,8 +609,8 @@ def _login_medium(page):
                 "selector_used": found_selector,
                 "password_length": len(MEDIUM_PASSWORD) if MEDIUM_PASSWORD else 0
             })
-            password_field.fill(MEDIUM_PASSWORD)
-            time.sleep(1)
+            await password_field.fill(MEDIUM_PASSWORD)
+            await asyncio.sleep(1)
             
             # Find sign in button
             signin_button_selectors = [
@@ -624,7 +625,7 @@ def _login_medium(page):
             for selector in signin_button_selectors:
                 try:
                     # Use proper count check instead of the object check
-                    if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                    if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                         signin_button = page.locator(selector).first
                         found_selector = selector
                         debug["selectors_found"]["password_signin_button"] = selector
@@ -636,7 +637,7 @@ def _login_medium(page):
                 # Take a screenshot when sign in button not found
                 now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 screenshot_path = f"{SCREENSHOTS_DIR}/signin_button_not_found_{now}.png"
-                page.screenshot(path=screenshot_path)
+                await page.screenshot(path=screenshot_path)
                 add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
                 
                 return {
@@ -646,16 +647,16 @@ def _login_medium(page):
                 }
             
             add_step("clicking_signin_button", {"selector_used": found_selector})
-            signin_button.click()
+            await signin_button.click()
             
             # Wait for the network to be idle
-            page.wait_for_load_state("networkidle")
-            time.sleep(3)
+            await page.wait_for_load_state("networkidle")
+            await asyncio.sleep(3)
             
             # Take a screenshot after clicking sign in
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/after_signin_password_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("after_signin_password_screenshot", {"path": screenshot_path})
         else:
             add_step("no_password_field_found", {"likely_using_email_link": True})
@@ -676,7 +677,7 @@ def _login_medium(page):
         for selector in auth_check_selectors:
             try:
                 # Use proper count check instead of the object check
-                if page.locator(selector).count() > 0 and page.locator(selector).first.is_visible():
+                if await page.locator(selector).count() > 0 and await page.locator(selector).first.is_visible():
                     is_authenticated = True
                     authenticated_selector = selector
                     debug["selectors_found"]["auth_confirmation"] = selector
@@ -690,7 +691,7 @@ def _login_medium(page):
             # Take a screenshot of success state
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/login_success_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("login_success_screenshot", {"path": screenshot_path})
             
             return {"authenticated": True, "error": None, "debug": debug}
@@ -700,15 +701,15 @@ def _login_medium(page):
             # Take a screenshot of failed state
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/login_failed_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("login_failed_screenshot", {"path": screenshot_path})
             
             # Additional check: See if there's an error message
             error_message = ""
             try:
                 for error_selector in ['.error-message', '.form-error', '.errorMessage']:
-                    if page.locator(error_selector).count() > 0:
-                        error_message = page.locator(error_selector).first.inner_text()
+                    if await page.locator(error_selector).count() > 0:
+                        error_message = await page.locator(error_selector).first.inner_text()
                         add_step("error_message_found", {"message": error_message})
                         break
             except:
@@ -723,7 +724,8 @@ def _login_medium(page):
                 }
             
             # Check for CAPTCHA - this would require human intervention
-            if "captcha" in page.content().lower():
+            page_content = await page.content()
+            if "captcha" in page_content.lower():
                 return {
                     "authenticated": False, 
                     "error": "CAPTCHA detected. Manual login required.",
@@ -744,14 +746,14 @@ def _login_medium(page):
         try:
             now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/login_exception_{now}.png"
-            page.screenshot(path=screenshot_path)
+            await page.screenshot(path=screenshot_path)
             add_step("exception_screenshot", {"path": screenshot_path})
         except:
             pass
         
         return {"authenticated": False, "error": error_msg, "debug": debug}
 
-def _save_cookies(context):
+async def _save_cookies(context):
     """
     Saves the current browser context cookies to a file for persistent session management.
     
@@ -766,7 +768,7 @@ def _save_cookies(context):
         bool: True if cookies were successfully saved, False otherwise
     """
     try:
-        cookies = context.cookies()
+        cookies = await context.cookies()
         
         # Check if we actually have cookies to save
         if not cookies or len(cookies) == 0:
@@ -788,7 +790,7 @@ def _save_cookies(context):
     except Exception as e:
         return False
 
-def _load_cookies(context):
+async def _load_cookies(context):
     """
     Loads cookies from a file and adds them to the provided browser context to restore a session.
     
@@ -813,7 +815,7 @@ def _load_cookies(context):
         if not cookies or len(cookies) == 0:
             return False
             
-        context.add_cookies(cookies)
+        await context.add_cookies(cookies)
         return True
     except Exception:
         return False
@@ -849,7 +851,7 @@ def _process_article_html(html):
     # Use a space as a separator to ensure text elements remain separated.
     return soup.get_text(separator=" ", strip=True)
 
-def _scrape_medium_article(page, short_url):
+async def _scrape_medium_article(page, short_url):
     """
     Scrapes a Medium article by navigating to its canonical URL and extracting key content.
     
@@ -871,7 +873,7 @@ def _scrape_medium_article(page, short_url):
             - 'Images': A list of image URLs extracted from the article (for reference).
     """
     # Get the article title (strip " | Medium" suffix if present)
-    article_name = page.title()
+    article_name = await page.title()
     if article_name and " | Medium" in article_name:
         article_name = article_name.split(" | Medium")[0]
     
@@ -879,7 +881,7 @@ def _scrape_medium_article(page, short_url):
     article_debug = {
         "title": article_name,
         "url": page.url,
-        "content_length": len(page.content()),
+        "content_length": len(await page.content()),
         "selectors_tried": []
     }
     
@@ -898,8 +900,8 @@ def _scrape_medium_article(page, short_url):
     article_html = ""
     for selector in article_selectors:
         try:
-            if page.locator(selector).count() > 0:
-                article_html = page.locator(selector).first.inner_html()
+            if await page.locator(selector).count() > 0:
+                article_html = await page.locator(selector).first.inner_html()
                 article_debug["selectors_tried"].append({
                     "selector": selector,
                     "found": True,
@@ -921,7 +923,7 @@ def _scrape_medium_article(page, short_url):
     # If we still don't have article content, take body as fallback
     if not article_html:
         try:
-            article_html = page.inner_html("body")
+            article_html = await page.inner_html("body")
             article_debug["using_body_fallback"] = True
         except Exception as e:
             article_debug["body_fallback_error"] = str(e)
@@ -932,10 +934,10 @@ def _scrape_medium_article(page, short_url):
     # Extract image URLs separately
     image_urls = []
     try:
-        images = page.locator("img").all()
+        images = await page.locator("img").all()
         for img in images:
             try:
-                src = img.get_attribute("src")
+                src = await img.get_attribute("src")
                 if src:
                     image_urls.append(src)
             except:
@@ -964,14 +966,13 @@ if __name__ == "__main__":
 # @mcp.resource("article://{url}")
 # def get_article_info(url: str) -> str:
 #     """Get information about an article at the given URL."""
-
+#     return f"Article at {url}!"
 
 # # Defining Resources - Placeholder
 # @mcp.resource("config://app")
 # def get_standard_greeting() -> str:
 #     """App configuration message."""
 #     return "Hello, World!"
-
 
 # # Defining Prompts - Placeholder
 # @mcp.prompt()
