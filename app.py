@@ -49,7 +49,7 @@ def setup_logger(server_name: str) -> logging.Logger:
     )
     
     # Create handlers
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(detailed_formatter)
     
@@ -300,6 +300,13 @@ gmail_server_params = StdioServerParameters(
     env=os.environ.copy()
 )
 
+# Create server parameters for the Web Scraping MCP server
+web_scraping_server_params = StdioServerParameters(
+    command="python",
+    args=["mcp_servers\\web_scraping.py"],
+    env=os.environ.copy()
+)
+
 # Load API key from environment variables
 api_key = os.getenv("ANTHROPIC_API_KEY")
 if not api_key:
@@ -341,32 +348,66 @@ async def run():
             # Initialize the connection
             await session.initialize()
             logger.info("Successfully connected to Gmail MCP server!")
+
+            # Getting the list of articles from the latest Medium Daily Digest Email
+            tool_response = await session.call_tool("get_medium_articles_from_gmail", arguments={})
+
+            # Extract the articles from the tool response
+            if tool_response.content and len(tool_response.content) > 0:
+                json_str = tool_response.content[0].text
+                articles = json.loads(json_str)
+                logger.info("Successfully retrieved articles from Medium Daily Digest Email")
             
-            # Define user prompt
-            user_query = "Please extract the articles from my latest Medium Daily Digest Email."
-            logger.info(f"User query: {user_query}")
+            if not isinstance(articles, list):
+                logger.error("Parsed articles is not a list. Check the JSON structure.")
+                return
             
-            # Run conversation with Claude
-            final_response = await claude_conversation(
-                session=session,
-                user_prompt=user_query,
-                system_prompt=llm_system_prompt_tool_use,
-                model="claude-3-7-sonnet-20250219",
-                max_tokens=8192,
-                temperature=0,
-                max_iterations=5,
-                max_conversation_length=8,
-                server_name="gmail",
-                logger=logger
-            )
-            
-            logger.info("Conversation completed successfully")
-            logger.info(f"Final response from Claude: {final_response}")
-            print("\nFinal response from Claude:")
-            print(final_response)
+            for article in articles:
+                logger.info(f"Article Name: {article['Article Name']}")
+                logger.info(f"Link: {article['Link']}")
+                logger.info(f"Author: {article['Author']}")
+    
+            logger.info("All articles retrieved successfully")
+    
+    # Set up logger for the Web Scraping MCP server
+    logger = setup_logger("web_scraping")
+    logger.info("Starting MCP client for Web Scraping server")
+    
+    async with stdio_client(web_scraping_server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            # Initialize the connection
+            await session.initialize()
+            logger.info("Successfully connected to Web Scraping MCP server!")
 
 if __name__ == "__main__":
     asyncio.run(run())
+
+# Claude Tool Call API Reference:
+
+# Call the tool from the MCP server
+
+# # Define user prompt
+# user_query = "Please extract the articles from my latest Medium Daily Digest Email."
+# logger.info(f"User query: {user_query}")
+
+# # Run conversation with Claude
+# final_response = await claude_conversation(
+#     session=session,
+#     user_prompt=user_query,
+#     system_prompt=llm_system_prompt_tool_use,
+#     model="claude-3-7-sonnet-20250219",
+#     max_tokens=8192,
+#     temperature=0,
+#     max_iterations=5,
+#     max_conversation_length=8,
+#     server_name="gmail",
+#     logger=logger
+# )
+
+# logger.info("Conversation completed successfully")
+# logger.info(f"Final response from Claude: {final_response}")
+# print("\nFinal response from Claude:")
+# print(final_response)
 
 
 # MCP Developer API Reference:
