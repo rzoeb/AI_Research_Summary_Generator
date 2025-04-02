@@ -9,6 +9,7 @@ from google.auth.transport.requests import Request
 import pickle
 from bs4 import BeautifulSoup
 import json
+from urllib.parse import urlparse, urlunparse
 
 mcp = FastMCP("Gmail MCP Server")
 
@@ -294,7 +295,7 @@ def extract_medium_articles(email_body: str) -> str:
             if title_elem:
                 link_parent = title_elem.find_parent('a')
                 if link_parent and 'href' in link_parent.attrs:
-                    article['Link'] = link_parent['href']
+                    article['Link'] = _get_short_url(link_parent['href'])
             
             # Strategy 2: Look in the main content div
             if 'Link' not in article:
@@ -302,7 +303,7 @@ def extract_medium_articles(email_body: str) -> str:
                 if content_div:
                     link_elem = content_div.find('a', class_='ag')
                     if link_elem and 'href' in link_elem.attrs:
-                        article['Link'] = link_elem['href']
+                        article['Link'] = _get_short_url(link_elem['href'])
             
             # Only add articles with at least title and link
             if article.get('Article Name') and article.get('Link'):
@@ -477,6 +478,38 @@ def _format_message(msg):
         "date": headers.get('Date', ''),
         "body": body
     }
+
+def _get_short_url(url):
+    """
+    Extracts the canonical URL from a full Medium article URL by removing tracking parameters.
+    
+    This function processes a Medium article URL that might contain appended query parameters
+    and fragments used for referral tracking or analytics. It utilizes Python's urllib.parse module
+    to decompose the URL into its fundamental parts, and then rebuilds the URL to include only the
+    scheme, network location (netloc), and path. This ensures that any extra tracking data is removed,
+    leaving the clean, canonical URL.
+    
+    Args:
+        url (str): The full Medium article URL, potentially containing query parameters and fragments.
+    
+    Returns:
+        str: The canonical URL constructed from the scheme, netloc, and path, or the original URL
+             if any parsing errors occur.
+    """
+    try:
+        if not url or not isinstance(url, str):
+            return url
+        
+        parts = urlparse(url)
+        
+        # Verify we have enough components to form a valid URL
+        if not parts.scheme or not parts.netloc:
+            return url
+            
+        return urlunparse((parts.scheme, parts.netloc, parts.path, '', '', ''))
+    except Exception:
+        # Return the original URL if any parsing errors occur
+        return url
 
 # Ensure the MCP server is exposed properly
 if __name__ == "__main__":
