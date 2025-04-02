@@ -295,7 +295,9 @@ def extract_medium_articles(email_body: str) -> str:
             if title_elem:
                 link_parent = title_elem.find_parent('a')
                 if link_parent and 'href' in link_parent.attrs:
-                    article['Link'] = _get_short_url(link_parent['href'])
+                    url_result = _get_short_url(link_parent['href'])
+                    if not isinstance(url_result, dict) or "error" not in url_result:
+                        article['Link'] = url_result
             
             # Strategy 2: Look in the main content div
             if 'Link' not in article:
@@ -303,7 +305,9 @@ def extract_medium_articles(email_body: str) -> str:
                 if content_div:
                     link_elem = content_div.find('a', class_='ag')
                     if link_elem and 'href' in link_elem.attrs:
-                        article['Link'] = _get_short_url(link_elem['href'])
+                        url_result = _get_short_url(link_elem['href'])
+                        if not isinstance(url_result, dict) or "error" not in url_result:
+                            article['Link'] = url_result
             
             # Only add articles with at least title and link
             if article.get('Article Name') and article.get('Link'):
@@ -493,23 +497,24 @@ def _get_short_url(url):
         url (str): The full Medium article URL, potentially containing query parameters and fragments.
     
     Returns:
-        str: The canonical URL constructed from the scheme, netloc, and path, or the original URL
-             if any parsing errors occur.
+        str or dict: The canonical URL constructed from the scheme, netloc, and path if parsing succeeds,
+                    or a dictionary with an error message if parsing fails or the URL is invalid.
+                    Error format: {"error": "Error message details"}
     """
     try:
         if not url or not isinstance(url, str):
-            return url
+            return {"error": "Invalid URL: URL must be a non-empty string"}
         
         parts = urlparse(url)
         
         # Verify we have enough components to form a valid URL
         if not parts.scheme or not parts.netloc:
-            return url
+            return {"error": "Invalid URL: Missing scheme or domain"}
             
         return urlunparse((parts.scheme, parts.netloc, parts.path, '', '', ''))
-    except Exception:
-        # Return the original URL if any parsing errors occur
-        return url
+    except Exception as e:
+        # Return an error dictionary instead of the original URL
+        return {"error": f"URL parsing error: {str(e)}"}
 
 # Ensure the MCP server is exposed properly
 if __name__ == "__main__":
