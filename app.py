@@ -445,9 +445,9 @@ async def run():
                                     logger.info(f"Content length: {content_length}")
                                     logger.info(f"Number of images: {len(images)}")
                                     
-                                    # Content summary (first 150 chars)
+                                    # Content summary (first 15000 chars)
                                     if content_length > 0:
-                                        summary = content_text[:150] + "..." if len(content_text) > 150 else content_text
+                                        summary = content_text[:150000] + "..." if len(content_text) > 15000 else content_text
                                         logger.info(f"Content preview: {summary}")
                                 else:
                                     logger.error("Article was scraped but contains no content")
