@@ -10,6 +10,7 @@ import logging
 import logging.handlers
 import pathlib
 from typing import List, Dict, Any, Optional, Union, Tuple
+import sys
 
 # Load environment variables from .env file
 load_dotenv()
@@ -311,7 +312,7 @@ web_scraping_server_params = StdioServerParameters(
 api_key = os.getenv("ANTHROPIC_API_KEY")
 if not api_key:
     print("Error: ANTHROPIC_API_KEY environment variable not set.")
-    exit()
+    sys.exit(1)
 
 # Initialize Claude client
 client = anthropic.Anthropic(api_key=api_key)
@@ -339,6 +340,62 @@ Think step-by-step about which tools to use and in what order.
 
 async def run():
     """Main function to run the MCP client"""
+    # Setup a logger for cookie validation
+    logger = setup_logger("cookie_validation")
+    logger.info("Starting Medium cookie validation check")
+    
+    # Validate Medium cookies first
+    logger.info("Connecting to Web Scraping MCP server to validate Medium cookies")
+    async with stdio_client(web_scraping_server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            # Initialize the connection
+            await session.initialize()
+            logger.info("Successfully connected to Web Scraping MCP server")
+            
+            # Call the cookie validation tool
+            logger.info("Validating Medium cookies...")
+            tool_response = await session.call_tool("validate_medium_cookies", arguments={})
+            
+            # Extract the validation result
+            if tool_response.content and len(tool_response.content) > 0:
+                validation_result = json.loads(tool_response.content[0].text)
+                
+                if not validation_result.get("valid", False):
+                    error_msg = validation_result.get("error", "Unknown error with Medium cookies")
+                    logger.error(f"Medium cookie validation failed: {error_msg}")
+                    logger.error("Please run generate_medium_cookies.py to regenerate valid cookies.")
+                    
+                    # Print to console for visibility
+                    print("\n")
+                    print("=" * 80)
+                    print("ERROR: Medium cookie validation failed!")
+                    print(f"Reason: {error_msg}")
+                    print("\nPlease run the following command to regenerate cookies:")
+                    print("python generate_medium_cookies.py")
+                    print("=" * 80)
+                    print("\n")
+                    
+                    # Exit the program
+                    sys.exit(1)
+                else:
+                    logger.info("Medium cookies validated successfully")
+            else:
+                logger.error("Empty response from validate_medium_cookies tool")
+                logger.error("Unable to verify cookie validity. Exiting as a precaution.")
+                
+                # Print to console for visibility
+                print("\n")
+                print("=" * 80)
+                print("ERROR: Could not verify Medium cookie validity!")
+                print("Please run the following command to regenerate cookies:")
+                print("python generate_medium_cookies.py")
+                print("=" * 80)
+                print("\n")
+                
+                # Exit the program
+                sys.exit(1)
+    
+    # Continue with normal execution now that cookies are validated
     # Set up logger for the Gmail MCP server
     logger = setup_logger("gmail")
     logger.info("Starting MCP client for Gmail server")
