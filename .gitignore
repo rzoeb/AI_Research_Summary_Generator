@@ -9,6 +9,9 @@ token_web.pickle
 # Medium Cookies
 medium_cookies.json
 
+# Playright Debugging Screenshots
+debugging_screenshots/*.png
+
 # Python specific stuff
 # Byte-compiled / optimized / DLL files
 __pycache__/
