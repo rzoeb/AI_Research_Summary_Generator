@@ -63,43 +63,6 @@ def setup_logger(server_name: str) -> logging.Logger:
     
     return logger
 
-# Create server parameters for Gmail MCP server
-gmail_server_params = StdioServerParameters(
-    command="python",  
-    args=["mcp_servers\\gmail.py"],
-    env=os.environ.copy()
-)
-
-# Load API key from environment variables
-api_key = os.getenv("ANTHROPIC_API_KEY")
-if not api_key:
-    print("Error: ANTHROPIC_API_KEY environment variable not set.")
-    exit()
-
-# Initialize Claude client
-client = anthropic.Anthropic(api_key=api_key)
-
-# Default system prompt for tool use
-llm_system_prompt_tool_use = """
-You are an AI assistant that helps users with a broad range of requests by using special tools.
-
-Available tools:
-{tools_description}
-
-When the user makes a request, you should:
-1. Decide whether to use internal knowledge or one or more tools to fulfill the request.
-2. If tools are needed, choose the most appropriate ones and use them step-by-step.
-3. Interpret the tool results and present helpful, well-organized responses to the user, following any requested output formats.
-4. If a tool fails or returns an error, explain the issue to the user and suggest alternatives if possible.
-
-Guidelines:
-- Use tools only when they improve accuracy, access real-time data, or enable capabilities you don't have internally.
-- Explain your reasoning when it helps the user understand the process.
-- Adapt to new tools as they become available. Never assume a tool exists unless it is listed.
-
-Think step-by-step about which tools to use and in what order.
-"""
-
 async def tool_calling_claude(
     session: ClientSession,
     tool_name: str,
@@ -160,7 +123,7 @@ async def tool_calling_claude(
 async def claude_conversation(
     session: ClientSession,
     user_prompt: str,
-    system_prompt: str = llm_system_prompt_tool_use,
+    system_prompt: str,
     model: str = "claude-3-7-sonnet-20250219",
     max_tokens: int = 8192,
     temperature: float = 0,
@@ -329,6 +292,43 @@ async def claude_conversation(
         logger.warning(f"Reached maximum iterations ({max_iterations}). Stopping.")
     
     return final_response
+
+# Create server parameters for Gmail MCP server
+gmail_server_params = StdioServerParameters(
+    command="python",  
+    args=["mcp_servers\\gmail.py"],
+    env=os.environ.copy()
+)
+
+# Load API key from environment variables
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    print("Error: ANTHROPIC_API_KEY environment variable not set.")
+    exit()
+
+# Initialize Claude client
+client = anthropic.Anthropic(api_key=api_key)
+
+# Default system prompt for tool use
+llm_system_prompt_tool_use = """
+You are an AI assistant that helps users with a broad range of requests by using special tools.
+
+Available tools:
+{tools_description}
+
+When the user makes a request, you should:
+1. Decide whether to use internal knowledge or one or more tools to fulfill the request.
+2. If tools are needed, choose the most appropriate ones and use them step-by-step.
+3. Interpret the tool results and present helpful, well-organized responses to the user, following any requested output formats.
+4. If a tool fails or returns an error, explain the issue to the user and suggest alternatives if possible.
+
+Guidelines:
+- Use tools only when they improve accuracy, access real-time data, or enable capabilities you don't have internally.
+- Explain your reasoning when it helps the user understand the process.
+- Adapt to new tools as they become available. Never assume a tool exists unless it is listed.
+
+Think step-by-step about which tools to use and in what order.
+"""
 
 async def run():
     """Main function to run the MCP client"""
