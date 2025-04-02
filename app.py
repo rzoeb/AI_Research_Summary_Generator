@@ -379,11 +379,6 @@ async def run():
             await session.initialize()
             logger.info("Successfully connected to Web Scraping MCP server!")
 
-            # log medium environment variables
-            logger.info(f"MEDIUM_EMAIL: {os.getenv('MEDIUM_EMAIL')}")
-            logger.info(f"MEDIUM_PASSWORD: {os.getenv('MEDIUM_PASSWORD')}") 
-            logger.info(f"MEDIUM_COOKIES_FILE: {os.getenv('MEDIUM_COOKIES_FILE')}")
-
             # Check if articles were retrieved from the Gmail MCP server
             if 'articles' in locals() and articles:
                 # Process the first article from the list
@@ -404,16 +399,89 @@ async def run():
                         try:
                             article_content = json.loads(json_str)
                             
-                            logger.info("Successfully scraped article content")
-                            logger.info(f"Article title: {article_content.get('Name')}")
-                            logger.info(f"Content length: {len(article_content.get('Scraped text', ''))}")
-                            logger.info(f"Number of images: {len(article_content.get('Images', []))}")
-                            
-                            # Here you can add code to process the article content further
-                            # For example, you could summarize it with Claude, extract key points, etc.
-                            
+                            # Enhanced error handling and validation
+                            if "error" in article_content:
+                                logger.error(f"Web scraping failed with error: {article_content['error']}")
+                                
+                                # Log debug information if available
+                                if "debug_info" in article_content:
+                                    debug_info = article_content["debug_info"]
+                                    
+                                    # Log key debugging information
+                                    logger.error(f"Debug timestamp: {debug_info.get('timestamp')}")
+                                    
+                                    # Log process steps
+                                    if "process_steps" in debug_info:
+                                        logger.error("Process steps:")
+                                        for step in debug_info["process_steps"]:
+                                            step_details = step.get("details", {})
+                                            step_details_str = json.dumps(step_details) if step_details else "No details"
+                                            logger.error(f"  - {step.get('step')}: {step_details_str}")
+                                    
+                                    # Log authentication status
+                                    logger.error(f"Authentication: attempted={debug_info.get('login_attempted', False)}, "
+                                               f"successful={debug_info.get('login_successful', False)}")
+                                    
+                                    # Log screenshot paths
+                                    if "screenshots" in debug_info and debug_info["screenshots"]:
+                                        logger.error("Screenshots captured:")
+                                        for screenshot in debug_info["screenshots"]:
+                                            logger.error(f"  - {screenshot}")
+                                    
+                                    # Log recorded errors
+                                    if "errors" in debug_info and debug_info["errors"]:
+                                        logger.error("Recorded errors:")
+                                        for error in debug_info["errors"]:
+                                            logger.error(f"  - {error}")
+                            elif "Name" in article_content and "Scraped text" in article_content:
+                                # Only log success if we actually have content
+                                content_text = article_content.get("Scraped text", "")
+                                content_length = len(content_text) if content_text else 0
+                                images = article_content.get("Images", [])
+                                
+                                if content_length > 0:
+                                    logger.info("Successfully scraped article content")
+                                    logger.info(f"Article title: {article_content.get('Name')}")
+                                    logger.info(f"Content length: {content_length}")
+                                    logger.info(f"Number of images: {len(images)}")
+                                    
+                                    # Content summary (first 150 chars)
+                                    if content_length > 0:
+                                        summary = content_text[:150] + "..." if len(content_text) > 150 else content_text
+                                        logger.info(f"Content preview: {summary}")
+                                else:
+                                    logger.error("Article was scraped but contains no content")
+                                    logger.error(f"Article title: {article_content.get('Name')}")
+                                    
+                                    # Log article debug info if available
+                                    if "article_debug" in article_content:
+                                        article_debug = article_content["article_debug"]
+                                        logger.error("Article debugging information:")
+                                        
+                                        # Log selectors tried
+                                        if "selectors_tried" in article_debug:
+                                            logger.error("Selectors tried:")
+                                            for selector_info in article_debug["selectors_tried"]:
+                                                selector = selector_info.get("selector", "unknown")
+                                                found = selector_info.get("found", False)
+                                                content_length = selector_info.get("content_length", 0) if found else 0
+                                                logger.error(f"  - {selector}: found={found}, length={content_length}")
+                                        
+                                        # Log fallback information
+                                        if "using_body_fallback" in article_debug:
+                                            logger.error(f"Used body fallback: {article_debug.get('using_body_fallback')}")
+                                        
+                                        # Log potential errors
+                                        if "body_fallback_error" in article_debug:
+                                            logger.error(f"Body fallback error: {article_debug.get('body_fallback_error')}")
+                                        
+                                        if "image_extraction_error" in article_debug:
+                                            logger.error(f"Image extraction error: {article_debug.get('image_extraction_error')}")
+                            else:
+                                logger.error("Unexpected response format from scraping tool")
+                                logger.error(f"Response keys: {list(article_content.keys())}")
                         except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse article content: {e}")
+                            logger.error(f"Failed to parse article content as JSON: {e}")
                             logger.error(f"Raw response: {json_str[:500]}...")
                     else:
                         logger.error("Empty response from scrape_medium_article_content tool")
