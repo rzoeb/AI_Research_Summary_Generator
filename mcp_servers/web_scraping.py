@@ -60,176 +60,302 @@ async def validate_medium_cookies() -> dict: # The dictionary outputted by the t
         if details:
             step_info["details"] = details
         debug_info["process_steps"].append(step_info)
-    
+
     add_debug_step("start_validation")
     
-    # Check if cookie file exists
-    if not os.path.exists(MEDIUM_COOKIES_FILE):
-        error_msg = f"Cookie file not found at {MEDIUM_COOKIES_FILE}"
-        debug_info["errors"].append(error_msg)
-        add_debug_step("file_check_failed", {"error": error_msg})
-        return {
-            "valid": False, 
-            "error": error_msg,
-            "debug_info": debug_info if DEBUG_MODE else None
-        }
-    
-    debug_info["file_exists"] = True
-    add_debug_step("file_exists")
-    
-    # Load cookies
     try:
-        with open(MEDIUM_COOKIES_FILE, "r") as f:
-            cookies = json.load(f)
-            
-        if not cookies or len(cookies) == 0:
-            error_msg = "Cookie file exists but contains no cookies"
+        # Check if cookie file exists
+        if not os.path.exists(MEDIUM_COOKIES_FILE):
+            error_msg = f"Cookie file not found at {MEDIUM_COOKIES_FILE}"
             debug_info["errors"].append(error_msg)
-            add_debug_step("empty_cookies", {"error": error_msg})
+            add_debug_step("file_check_failed", {"error": error_msg})
             return {
                 "valid": False, 
                 "error": error_msg,
                 "debug_info": debug_info if DEBUG_MODE else None
             }
-            
-        debug_info["cookies_loaded"] = True
-        debug_info["cookie_count"] = len(cookies)
-        add_debug_step("cookies_loaded", {"count": len(cookies)})
-    except Exception as e:
-        error_msg = f"Error loading cookies: {str(e)}"
-        debug_info["errors"].append(error_msg)
-        add_debug_step("loading_failed", {"error": error_msg})
-        return {
-            "valid": False, 
-            "error": error_msg,
-            "debug_info": debug_info if DEBUG_MODE else None
-        }
-    
-    # Validate cookies with Playwright
-    add_debug_step("initializing_playwright")
-    async with async_playwright() as p:
+        
+        debug_info["file_exists"] = True
+        add_debug_step("file_exists")
+        
+        # Load and validate cookies structure
         try:
-            browser = await p.chromium.launch(headless=True)  # Use headless mode for validation
-            add_debug_step("browser_launched")
+            with open(MEDIUM_COOKIES_FILE, "r") as f:
+                cookies = json.load(f)
+                
+            # Validate cookie structure
+            if not isinstance(cookies, list):
+                error_msg = "Invalid cookie format: expected a list of cookies"
+                debug_info["errors"].append(error_msg)
+                add_debug_step("invalid_cookie_format", {"error": error_msg})
+                return {
+                    "valid": False,
+                    "error": error_msg,
+                    "debug_info": debug_info if DEBUG_MODE else None
+                }
             
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
-            )
-            add_debug_step("context_created")
-            
-            # Add the cookies to the context
-            await context.add_cookies(cookies)
-            add_debug_step("cookies_added_to_context")
-            
-            # Create a new page
-            page = await context.new_page()
-            add_debug_step("page_created")
-            
-            try:
-                add_debug_step("navigating_to_medium")
-                await page.goto("https://medium.com", wait_until="networkidle")
-                
-                # Check if we're logged in
-                auth_indicators = [
-                    'button[aria-label="User"]',
-                    'img.avatar',
-                    'a[href*="/@"]',
-                    'button:has-text("Write")',
-                    'div[data-testid="user-menu"]',
-                    # Additional selectors that are more resilient to UI changes
-                    'div[aria-label="Profile"]',
-                    'img[alt*="Profile picture"]',
-                    'button:has-text("Sign out")',
-                    'a[href="/me"]',
-                    'a[href="/me/stories"]',
-                    'a:has-text("Member")',
-                    'a:has-text("profile")',
-                    # More general checks - any of these would indicate a logged-in state
-                    'button:has-text("Notifications")',
-                    'button:has-text("Lists")',
-                    'button:has-text("Stories")'
-                ]
-                
-                # Add HTML content check as fallback if selectors fail
-                logged_in = False
-                found_selector = None
-                
-                for selector in auth_indicators:
-                    try:
-                        if await page.locator(selector).count() > 0 and await page.locator(selector).is_visible():
-                            logged_in = True
-                            found_selector = selector
-                            add_debug_step("authentication_confirmed", {"selector": selector})
-                            break
-                    except Exception as e:
-                        add_debug_step("selector_check_failed", {"selector": selector, "error": str(e)})
-                
-                # Fallback check: Look for logged-in indicators in the page content if selectors didn't work
-                if not logged_in:
-                    add_debug_step("trying_content_based_check")
-                    page_content = await page.content()
-                    logged_in_indicators = [
-                        "Sign out",
-                        "Your stories",
-                        "Your profile",
-                        "Account settings",
-                        "Write a story"
-                    ]
-                    
-                    for indicator in logged_in_indicators:
-                        if indicator.lower() in page_content.lower():
-                            logged_in = True
-                            add_debug_step("content_check_authenticated", {"indicator": indicator})
-                            break
-                
-                # Take a screenshot for debugging
-                screenshot_path = await take_screenshot(page, "cookie_validation")
-                if screenshot_path:
-                    debug_info["screenshots"].append(screenshot_path)
-                add_debug_step("screenshot_taken", {"path": screenshot_path} if screenshot_path else {"skipped": True})
-                
-                if logged_in:
-                    add_debug_step("validation_successful")
+            # Check for required cookie fields
+            required_fields = ["name", "value", "domain"]
+            missing_fields = []
+            for cookie in cookies:
+                if not isinstance(cookie, dict):
+                    error_msg = "Invalid cookie format: each cookie must be a dictionary"
+                    debug_info["errors"].append(error_msg)
+                    add_debug_step("invalid_cookie_object", {"error": error_msg})
                     return {
-                        "valid": True, 
-                        "error": None,
+                        "valid": False,
+                        "error": error_msg,
                         "debug_info": debug_info if DEBUG_MODE else None
                     }
-                else:
-                    error_msg = "Cookie validation failed - Not logged into Medium"
+                
+                missing = [field for field in required_fields if field not in cookie]
+                if missing:
+                    missing_fields.extend(missing)
+            
+            if missing_fields:
+                error_msg = f"Cookies missing required fields: {', '.join(set(missing_fields))}"
+                debug_info["errors"].append(error_msg)
+                add_debug_step("missing_cookie_fields", {"missing_fields": list(set(missing_fields))})
+                return {
+                    "valid": False,
+                    "error": error_msg,
+                    "debug_info": debug_info if DEBUG_MODE else None
+                }
+                
+            if not cookies:
+                error_msg = "Cookie file exists but contains no cookies"
+                debug_info["errors"].append(error_msg)
+                add_debug_step("empty_cookies", {"error": error_msg})
+                return {
+                    "valid": False, 
+                    "error": error_msg,
+                    "debug_info": debug_info if DEBUG_MODE else None
+                }
+                
+            debug_info["cookies_loaded"] = True
+            debug_info["cookie_count"] = len(cookies)
+            add_debug_step("cookies_loaded", {"count": len(cookies)})
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in cookie file: {str(e)}"
+            debug_info["errors"].append(error_msg)
+            add_debug_step("json_decode_error", {"error": error_msg})
+            return {
+                "valid": False,
+                "error": error_msg,
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
+        except Exception as e:
+            error_msg = f"Error loading cookies: {str(e)}"
+            debug_info["errors"].append(error_msg)
+            add_debug_step("loading_failed", {"error": error_msg})
+            return {
+                "valid": False, 
+                "error": error_msg,
+                "debug_info": debug_info if DEBUG_MODE else None
+            }
+        
+        # Validate cookies with Playwright
+        add_debug_step("initializing_playwright")
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch(headless=not DEBUG_MODE)
+                add_debug_step("browser_launched")
+                
+                context = await browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                )
+                add_debug_step("context_created")
+                
+                # Add cookies to the context with error handling
+                try:
+                    await context.add_cookies(cookies)
+                    add_debug_step("cookies_added_to_context")
+                except Exception as e:
+                    error_msg = f"Failed to add cookies to browser context: {str(e)}"
                     debug_info["errors"].append(error_msg)
-                    add_debug_step("validation_failed", {"error": error_msg})
+                    add_debug_step("cookie_add_failed", {"error": error_msg})
+                    return {
+                        "valid": False,
+                        "error": error_msg,
+                        "debug_info": debug_info if DEBUG_MODE else None
+                    }
+                
+                page = await context.new_page()
+                add_debug_step("page_created")
+                
+                try:
+                    # Navigate with timeout and error handling
+                    add_debug_step("navigating_to_medium")
+                    await page.goto("https://medium.com", wait_until="networkidle", timeout=30000)
+                    
+                    # Wait for the page to be fully loaded
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                    
+                    # Try multiple authentication check approaches
+                    auth_checks = {
+                        "primary": [
+                            'button[aria-label="User"]',
+                            'div[data-testid="user-menu"]',
+                            'a[href="/me"]'
+                        ],
+                        "secondary": [
+                            'img.avatar',
+                            'a[href*="/@"]',
+                            'button:has-text("Write")',
+                            'div[aria-label="Profile"]',
+                            'img[alt*="Profile picture"]'
+                        ],
+                        "fallback": [
+                            'button:has-text("Notifications")',
+                            'button:has-text("Lists")',
+                            'button:has-text("Stories")',
+                            'a:has-text("Member")',
+                            'a:has-text("profile")'
+                        ]
+                    }
+                    
+                    # Add HTML content check as fallback
+                    logged_in = False
+                    found_selector = None
+                    auth_check_results = []
+                    
+                    # Try primary selectors first
+                    for check_type, selectors in auth_checks.items():
+                        for selector in selectors:
+                            try:
+                                element_count = await page.locator(selector).count()
+                                is_visible = False
+                                if element_count > 0:
+                                    first_element = page.locator(selector).first
+                                    try:
+                                        is_visible = await first_element.is_visible()
+                                    except Exception as e:
+                                        auth_check_results.append({
+                                            "type": check_type,
+                                            "selector": selector,
+                                            "found": True,
+                                            "visible": False,
+                                            "error": str(e)
+                                        })
+                                        continue
+
+                                    if is_visible:
+                                        logged_in = True
+                                        found_selector = selector
+                                        add_debug_step("authentication_confirmed", {
+                                            "selector": selector,
+                                            "type": check_type
+                                        })
+                                        break
+                                
+                                auth_check_results.append({
+                                    "type": check_type,
+                                    "selector": selector,
+                                    "found": element_count > 0,
+                                    "visible": is_visible
+                                })
+                                
+                            except Exception as e:
+                                auth_check_results.append({
+                                    "type": check_type,
+                                    "selector": selector,
+                                    "error": str(e)
+                                })
+                                add_debug_step("selector_check_failed", {
+                                    "selector": selector,
+                                    "type": check_type,
+                                    "error": str(e)
+                                })
+                        
+                        if logged_in:
+                            break
+                    
+                    # Content-based authentication check if selectors didn't work
+                    if not logged_in:
+                        add_debug_step("trying_content_based_check")
+                        try:
+                            page_content = await page.content()
+                            logged_in_indicators = [
+                                "Sign out",
+                                "Your stories",
+                                "Your profile",
+                                "Write a story",
+                                "Account settings"
+                            ]
+                            
+                            for indicator in logged_in_indicators:
+                                if indicator.lower() in page_content.lower():
+                                    logged_in = True
+                                    add_debug_step("content_check_authenticated", {"indicator": indicator})
+                                    break
+                                
+                        except Exception as e:
+                            add_debug_step("content_check_failed", {"error": str(e)})
+                    
+                    # Take screenshot for debugging if enabled
+                    screenshot_path = await _take_screenshot(page, "cookie_validation")
+                    if screenshot_path:
+                        debug_info["screenshots"].append(screenshot_path)
+                    add_debug_step("screenshot_taken", {"path": screenshot_path} if screenshot_path else {"skipped": True})
+                    
+                    # Add authentication check results to debug info
+                    debug_info["auth_check_results"] = auth_check_results
+                    
+                    if logged_in:
+                        add_debug_step("validation_successful")
+                        return {
+                            "valid": True, 
+                            "error": None,
+                            "debug_info": debug_info if DEBUG_MODE else None
+                        }
+                    else:
+                        error_msg = "Cookie validation failed - Not logged into Medium"
+                        debug_info["errors"].append(error_msg)
+                        add_debug_step("validation_failed", {"error": error_msg})
+                        return {
+                            "valid": False, 
+                            "error": error_msg,
+                            "debug_info": debug_info if DEBUG_MODE else None
+                        }
+                        
+                except Exception as e:
+                    error_msg = f"Error during page navigation or validation: {str(e)}"
+                    debug_info["errors"].append(error_msg)
+                    add_debug_step("validation_exception", {"error": error_msg})
                     return {
                         "valid": False, 
                         "error": error_msg,
                         "debug_info": debug_info if DEBUG_MODE else None
                     }
+                finally:
+                    await page.close()
+                    add_debug_step("page_closed")
                     
             except Exception as e:
-                error_msg = f"Error during validation: {str(e)}"
+                error_msg = f"Browser automation error: {str(e)}"
                 debug_info["errors"].append(error_msg)
-                add_debug_step("validation_exception", {"error": error_msg})
+                add_debug_step("browser_error", {"error": error_msg})
                 return {
                     "valid": False, 
                     "error": error_msg,
                     "debug_info": debug_info if DEBUG_MODE else None
                 }
             finally:
-                await page.close()
-                add_debug_step("page_closed")
-        except Exception as e:
-            error_msg = f"Browser automation error: {str(e)}"
-            debug_info["errors"].append(error_msg)
-            add_debug_step("browser_error", {"error": error_msg})
-            return {
-                "valid": False, 
-                "error": error_msg,
-                "debug_info": debug_info if DEBUG_MODE else None
-            }
-        finally:
-            if 'browser' in locals():
-                await browser.close()
-                add_debug_step("browser_closed")
+                if 'browser' in locals():
+                    await browser.close()
+                    add_debug_step("browser_closed")
+                    
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        debug_info["errors"].append(error_msg)
+        add_debug_step("unexpected_error", {"error": error_msg})
+        return {
+            "valid": False, 
+            "error": error_msg,
+            "debug_info": debug_info if DEBUG_MODE else None
+        }
 
 @mcp.tool()
 async def scrape_medium_article_content(short_url: str) -> dict: # The dictionary outputted by the tool will have a "debug_info" key containing the debug information if DEBUG_MODE is true and there is an error 
@@ -339,7 +465,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     debug_info["login_attempted"] = True
                     
                     # Take screenshot at the beginning
-                    screenshot_path = await take_screenshot(page, "login_start")
+                    screenshot_path = await _take_screenshot(page, "login_start")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -355,7 +481,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         else:
                             debug_info["errors"].append(f"Failed to authenticate with Medium: {login_result['error']}")
                             # Take a screenshot of the failed login state
-                            screenshot_path = await take_screenshot(page, "login_failed")
+                            screenshot_path = await _take_screenshot(page, "login_failed")
                             if screenshot_path:
                                 debug_info["screenshots"].append(screenshot_path)
                             
@@ -369,7 +495,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("login_exception", {"error": error_msg})
                         
                         # Take a screenshot of the error state
-                        screenshot_path = await take_screenshot(page, "login_exception")
+                        screenshot_path = await _take_screenshot(page, "login_exception")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                         
@@ -395,7 +521,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     await asyncio.sleep(3)
                     
                     # Take a screenshot of what we're seeing
-                    screenshot_path = await take_screenshot(page, "article_page")
+                    screenshot_path = await _take_screenshot(page, "article_page")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -432,7 +558,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("title_extraction_failed")
                         
                         # Take a screenshot of the page for debugging
-                        screenshot_path = await take_screenshot(page, "title_extraction_failed")
+                        screenshot_path = await _take_screenshot(page, "title_extraction_failed")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                     
@@ -441,7 +567,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("content_extraction_failed")
                         
                         # Take a screenshot of the page for debugging
-                        screenshot_path = await take_screenshot(page, "content_extraction_failed")
+                        screenshot_path = await _take_screenshot(page, "content_extraction_failed")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                     
@@ -463,7 +589,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     add_debug_step("article_extraction_exception", {"error": error_msg})
                     
                     # Take a screenshot of the error state
-                    screenshot_path = await take_screenshot(page, "article_extraction_error")
+                    screenshot_path = await _take_screenshot(page, "article_extraction_error")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -496,22 +622,17 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
         }
 
 # Helper Functions
-async def take_screenshot(page, name):
+async def _take_screenshot(page, name):
     """Helper function to take screenshots only when DEBUG_MODE is True"""
-    print(f"take_screenshot called with DEBUG_MODE={DEBUG_MODE}")  # Temporary debug print
     if DEBUG_MODE:
         try:
             now = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/{name}_{now}.png"
-            print(f"Attempting to take screenshot: {screenshot_path}")  # Temporary debug print
             await page.screenshot(path=screenshot_path)
-            print(f"Screenshot taken successfully: {screenshot_path}")  # Temporary debug print
             return screenshot_path
         except Exception as e:
             print(f"Failed to take screenshot: {e}")
             return None
-    else:
-        print("DEBUG_MODE is False, skipping screenshot")  # Temporary debug print
     return None
 
 async def _login_medium(page):
@@ -560,7 +681,7 @@ async def _login_medium(page):
         debug["page_title"] = await page.title()
         
         # Take a screenshot of the homepage
-        screenshot_path = await take_screenshot(page, "medium_homepage")
+        screenshot_path = await _take_screenshot(page, "medium_homepage")
         if screenshot_path:
             add_step("medium_homepage_screenshot", {"path": screenshot_path})
         
@@ -591,7 +712,7 @@ async def _login_medium(page):
         
         if not signin_button:
             # Take a screenshot of the page when sign-in button not found
-            screenshot_path = await take_screenshot(page, "signin_button_not_found")
+            screenshot_path = await _take_screenshot(page, "signin_button_not_found")
             if screenshot_path:
                 add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
             
@@ -632,7 +753,7 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking sign-in
-        screenshot_path = await take_screenshot(page, "after_signin_click")
+        screenshot_path = await _take_screenshot(page, "after_signin_click")
         if screenshot_path:
             add_step("after_signin_click_screenshot", {"path": screenshot_path})
         
@@ -693,7 +814,7 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking email option
-        screenshot_path = await take_screenshot(page, "after_email_option_click")
+        screenshot_path = await _take_screenshot(page, "after_email_option_click")
         if screenshot_path:
             add_step("after_email_option_click_screenshot", {"path": screenshot_path})
         
@@ -729,7 +850,7 @@ async def _login_medium(page):
         
         if not email_field:
             # Take a screenshot when email field not found
-            screenshot_path = await take_screenshot(page, "email_field_not_found")
+            screenshot_path = await _take_screenshot(page, "email_field_not_found")
             if screenshot_path:
                 add_step("email_field_not_found_screenshot", {"path": screenshot_path})
             
@@ -768,7 +889,7 @@ async def _login_medium(page):
         
         if not continue_button:
             # Take a screenshot when continue button not found
-            screenshot_path = await take_screenshot(page, "continue_button_not_found")
+            screenshot_path = await _take_screenshot(page, "continue_button_not_found")
             if screenshot_path:
                 add_step("continue_button_not_found_screenshot", {"path": screenshot_path})
             
@@ -785,7 +906,7 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking continue
-        screenshot_path = await take_screenshot(page, "after_continue_click")
+        screenshot_path = await _take_screenshot(page, "after_continue_click")
         if screenshot_path:
             add_step("after_continue_click_screenshot", {"path": screenshot_path})
         
@@ -866,7 +987,7 @@ async def _login_medium(page):
             await asyncio.sleep(3)
             
             # Take a screenshot after clicking sign in
-            screenshot_path = await take_screenshot(page, "after_signin_password")
+            screenshot_path = await _take_screenshot(page, "after_signin_password")
             if screenshot_path:
                 add_step("after_signin_password_screenshot", {"path": screenshot_path})
         else:
@@ -900,7 +1021,7 @@ async def _login_medium(page):
             add_step("authentication_successful", {"selector_found": authenticated_selector})
             
             # Take a screenshot of success state
-            screenshot_path = await take_screenshot(page, "login_success")
+            screenshot_path = await _take_screenshot(page, "login_success")
             if screenshot_path:
                 add_step("login_success_screenshot", {"path": screenshot_path})
             
@@ -909,7 +1030,7 @@ async def _login_medium(page):
             add_step("authentication_failed")
             
             # Take a screenshot of failed state
-            screenshot_path = await take_screenshot(page, "login_failed")
+            screenshot_path = await _take_screenshot(page, "login_failed")
             if screenshot_path:
                 add_step("login_failed_screenshot", {"path": screenshot_path})
             
