@@ -433,6 +433,7 @@ async def run():
                 
                 if not validation_result.get("valid", False):
                     error_msg = validation_result.get("error", "Unknown error with Medium cookies")
+                    debug_info = validation_result.get("debug_info", "No debug info available - DEBUG_MODE is set to false")
                     logger.error(f"Medium cookie validation failed: {error_msg}")
                     logger.error("Please run generate_medium_cookies.py to regenerate valid cookies.")
                     
@@ -441,6 +442,8 @@ async def run():
                     print("=" * 80)
                     print("ERROR: Medium cookie validation failed!")
                     print(f"Reason: {error_msg}")
+                    print("Debug Info:")
+                    print(json.dumps(debug_info, indent=2))
                     print("\nPlease run the following command to regenerate cookies:")
                     print("python generate_medium_cookies.py")
                     print("=" * 80)
