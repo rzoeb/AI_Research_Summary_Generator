@@ -1,7 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.prompts import base
 import os
-import time
+from datetime import datetime
 import json
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
@@ -16,11 +16,25 @@ mcp = FastMCP("Web Scraping MCP Server")
 MEDIUM_EMAIL = os.getenv("MEDIUM_EMAIL", "your-email@example.com")
 MEDIUM_PASSWORD = os.getenv("MEDIUM_PASSWORD", "your-password")
 MEDIUM_COOKIES_FILE = os.getenv("MEDIUM_COOKIES_FILE", "medium_cookies.json")
-DEBUG_MODE = True  # Set to True to enable detailed debugging information
+DEBUG_MODE = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
 
-# Create screenshots directory if it doesn't exist
+# Create screenshots directory if it doesn't exist and DEBUG_MODE is true
 SCREENSHOTS_DIR = "debugging_screenshots"
-os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+if DEBUG_MODE:
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+
+def take_screenshot(page, name):
+    """Helper function to take screenshots only when DEBUG_MODE is True"""
+    if DEBUG_MODE:
+        try:
+            now = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_path = f"{SCREENSHOTS_DIR}/{name}_{now}.png"
+            page.screenshot(path=screenshot_path)
+            return screenshot_path
+        except Exception as e:
+            print(f"Failed to take screenshot: {e}")
+            return None
+    return None
 
 # Defining Tools
 @mcp.tool()
@@ -320,9 +334,9 @@ async def scrape_medium_article_content(short_url: str) -> dict:
         add_debug_step("initializing_playwright")
         async with async_playwright() as p:
             try:
-                # Use non-headless mode for debugging
-                browser = await p.chromium.launch(headless=False)
-                add_debug_step("browser_launched", {"headless": False})
+                # Use headless mode based on DEBUG_MODE
+                browser = await p.chromium.launch(headless=not DEBUG_MODE)
+                add_debug_step("browser_launched", {"headless": not DEBUG_MODE})
                 
                 context = await browser.new_context(
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
@@ -1186,7 +1200,7 @@ async def _scrape_medium_article(page, short_url):
                 "selector": selector,
                 "error": str(e)
             })
-    
+
     # If we still don't have article content, take body as fallback
     if not article_html:
         try:
