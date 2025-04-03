@@ -38,7 +38,7 @@ def take_screenshot(page, name):
 
 # Defining Tools
 @mcp.tool()
-async def validate_medium_cookies() -> dict:
+async def validate_medium_cookies() -> dict: # The dictionary outputted by the tool will have a "debug_info" key containing the debug information if DEBUG_MODE is true" 
     """
     Validates if the saved Medium cookies are still valid.
     
@@ -53,7 +53,6 @@ async def validate_medium_cookies() -> dict:
         dict: A dictionary containing:
             - "valid": Boolean indicating if the cookies are valid
             - "error": Error message if validation failed, None otherwise
-            - "debug_info": Dictionary containing debugging information (when DEBUG_MODE is True)
     """
     debug_info = {
         "timestamp": datetime.datetime.now().isoformat(),
@@ -247,7 +246,7 @@ async def validate_medium_cookies() -> dict:
                 add_debug_step("browser_closed")
 
 @mcp.tool()
-async def scrape_medium_article_content(short_url: str) -> dict:
+async def scrape_medium_article_content(short_url: str) -> dict: # The dictionary outputted by the tool will have a "debug_info" key containing the debug information if DEBUG_MODE is true and there is an error 
     """
     Scrapes a Medium article for its full content using browser automation with Playwright.
     
@@ -1152,6 +1151,14 @@ async def _scrape_medium_article(page, short_url):
             - 'Link': The canonical URL of the article.
             - 'Scraped text': The plain text content of the article with image placeholders inserted.
             - 'Images': A list of article image URLs extracted from the article content.
+            - 'article_debug': (Only when DEBUG_MODE=True) Dictionary containing debugging information:
+                - title: Article title found
+                - url: Current page URL
+                - content_length: Length of the raw HTML content
+                - selectors_tried: List of attempted article selectors and their results
+                - using_body_fallback: Whether body content was used as fallback
+                - article_image_count: Number of images found in the article
+                - processed_text_length: Length of the final processed text
     """
     # Get the article title (strip " | Medium" suffix if present)
     article_name = await page.title()
