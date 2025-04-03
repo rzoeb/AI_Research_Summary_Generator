@@ -21,6 +21,7 @@ def setup_logger(server_name: str) -> logging.Logger:
     Sets up a logger for a specific MCP server with both file and console handlers.
     
     The file handler creates logs with timestamps in the filename to preserve history.
+    Log levels and handlers are configured based on DEBUG_MODE environment variable.
     
     Args:
         server_name: Name of the MCP server for identification in logs
@@ -38,6 +39,8 @@ def setup_logger(server_name: str) -> logging.Logger:
     
     # Create logger
     logger = logging.getLogger(f"MCP_Client_{server_name}")
+    
+    # Set base level to DEBUG to catch all messages
     logger.setLevel(logging.DEBUG)
     
     # Clear any existing handlers
@@ -49,18 +52,44 @@ def setup_logger(server_name: str) -> logging.Logger:
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Create handlers
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(detailed_formatter)
+    # Debug formatter includes more details
+    debug_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    )
     
+    # Create handlers with different levels based on DEBUG_MODE
+    debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
+    
+    # File handler with rotation
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding="utf-8"
+    )
+    
+    if debug_mode:
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(debug_formatter)
+    else:
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(detailed_formatter)
+    
+    # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(detailed_formatter)
+    if debug_mode:
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(detailed_formatter)
+    else:
+        console_handler.setLevel(logging.WARNING)
+        console_handler.setFormatter(detailed_formatter)
     
     # Add handlers to logger
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    
+    # Log initial debug mode state
+    logger.info(f"Logger initialized for {server_name} with DEBUG_MODE={debug_mode}")
     
     return logger
 
