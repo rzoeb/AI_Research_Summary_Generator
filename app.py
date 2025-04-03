@@ -11,24 +11,71 @@ import logging.handlers
 import pathlib
 from typing import List, Dict, Any, Optional, Union, Tuple
 import sys
+import glob
 
 # Load environment variables from .env file
 load_dotenv()
 
+def cleanup_old_files(directory: str, max_files: int = 50):
+    """
+    Cleanup old files in a directory when the number of files exceeds max_files.
+    Keeps the most recent files based on modification time.
+    
+    Args:
+        directory: Path to the directory to clean
+        max_files: Maximum number of files to keep (default: 50)
+    """
+    try:
+        # Ensure directory exists
+        if not os.path.exists(directory):
+            return
+            
+        # Get all files in directory with their modification times
+        files = []
+        for file in os.listdir(directory):
+            file_path = os.path.join(directory, file)
+            if os.path.isfile(file_path):
+                mtime = os.path.getmtime(file_path)
+                files.append((file_path, mtime))
+        
+        # If we exceed max_files, delete the oldest ones
+        if len(files) > max_files:
+            # Sort by modification time (oldest first)
+            files.sort(key=lambda x: x[1])
+            
+            # Delete oldest files
+            files_to_delete = files[:-max_files]  # Keep the max_files most recent files
+            for file_path, _ in files_to_delete:
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    print(f"Failed to delete {file_path}: {e}")
+
+    except Exception as e:
+        print(f"Error during file cleanup: {e}")
+
 # Configure logging
-def setup_logger(server_name: str) -> logging.Logger:
+def setup_logger(server_name: str, max_log_files: int = 10, max_screenshot_files: int = 5) -> logging.Logger:
     """
     Sets up a logger for a specific MCP server with both file and console handlers.
     
     The file handler creates logs with timestamps in the filename to preserve history.
     Log levels and handlers are configured based on DEBUG_MODE environment variable.
+    Also manages the number of log and screenshot files.
     
     Args:
         server_name: Name of the MCP server for identification in logs
+        max_log_files: Maximum number of log files to keep (default: 50)
+        max_screenshot_files: Maximum number of screenshot files to keep (default: 50)
         
     Returns:
         Configured logger instance
     """
+    # Clean up old files
+    cleanup_old_files("logs", max_log_files)
+    if os.path.exists("debugging_screenshots"):
+        cleanup_old_files("debugging_screenshots", max_screenshot_files)
+    
     # Create logs directory if it doesn't exist
     log_dir = pathlib.Path("logs")
     log_dir.mkdir(exist_ok=True)
@@ -60,13 +107,8 @@ def setup_logger(server_name: str) -> logging.Logger:
     # Create handlers with different levels based on DEBUG_MODE
     debug_mode = os.getenv('DEBUG_MODE', 'false').lower() == 'true'
     
-    # File handler with rotation
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file,
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5,
-        encoding="utf-8"
-    )
+    # File handler
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     
     if debug_mode:
         file_handler.setLevel(logging.DEBUG)
