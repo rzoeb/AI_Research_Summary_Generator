@@ -55,7 +55,7 @@ def cleanup_old_files(directory: str, max_files: int = 50):
         print(f"Error during file cleanup: {e}")
 
 # Configure logging
-def setup_logger(server_name: str, max_log_files: int = 10, max_screenshot_files: int = 5) -> logging.Logger:
+def setup_logger(server_name: str, max_log_files: int = 6, max_screenshot_files: int = 5) -> logging.Logger:
     """
     Sets up a logger for a specific MCP server with both file and console handlers.
     
