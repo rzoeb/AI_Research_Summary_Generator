@@ -183,7 +183,7 @@ async def validate_medium_cookies() -> dict: # The dictionary outputted by the t
                             break
                 
                 # Take a screenshot for debugging
-                screenshot_path = _take_screenshot(page, "cookie_validation")
+                screenshot_path = await take_screenshot(page, "cookie_validation")
                 if screenshot_path:
                     debug_info["screenshots"].append(screenshot_path)
                 add_debug_step("screenshot_taken", {"path": screenshot_path} if screenshot_path else {"skipped": True})
@@ -339,7 +339,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     debug_info["login_attempted"] = True
                     
                     # Take screenshot at the beginning
-                    screenshot_path = _take_screenshot(page, "login_start")
+                    screenshot_path = await take_screenshot(page, "login_start")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -355,7 +355,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         else:
                             debug_info["errors"].append(f"Failed to authenticate with Medium: {login_result['error']}")
                             # Take a screenshot of the failed login state
-                            screenshot_path = _take_screenshot(page, "login_failed")
+                            screenshot_path = await take_screenshot(page, "login_failed")
                             if screenshot_path:
                                 debug_info["screenshots"].append(screenshot_path)
                             
@@ -369,7 +369,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("login_exception", {"error": error_msg})
                         
                         # Take a screenshot of the error state
-                        screenshot_path = _take_screenshot(page, "login_exception")
+                        screenshot_path = await take_screenshot(page, "login_exception")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                         
@@ -395,7 +395,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     await asyncio.sleep(3)
                     
                     # Take a screenshot of what we're seeing
-                    screenshot_path = _take_screenshot(page, "article_page")
+                    screenshot_path = await take_screenshot(page, "article_page")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -432,7 +432,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("title_extraction_failed")
                         
                         # Take a screenshot of the page for debugging
-                        screenshot_path = _take_screenshot(page, "title_extraction_failed")
+                        screenshot_path = await take_screenshot(page, "title_extraction_failed")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                     
@@ -441,7 +441,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                         add_debug_step("content_extraction_failed")
                         
                         # Take a screenshot of the page for debugging
-                        screenshot_path = _take_screenshot(page, "content_extraction_failed")
+                        screenshot_path = await take_screenshot(page, "content_extraction_failed")
                         if screenshot_path:
                             debug_info["screenshots"].append(screenshot_path)
                     
@@ -463,7 +463,7 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
                     add_debug_step("article_extraction_exception", {"error": error_msg})
                     
                     # Take a screenshot of the error state
-                    screenshot_path = _take_screenshot(page, "article_extraction_error")
+                    screenshot_path = await take_screenshot(page, "article_extraction_error")
                     if screenshot_path:
                         debug_info["screenshots"].append(screenshot_path)
                     
@@ -496,17 +496,22 @@ async def scrape_medium_article_content(short_url: str) -> dict: # The dictionar
         }
 
 # Helper Functions
-def _take_screenshot(page, name):
+async def take_screenshot(page, name):
     """Helper function to take screenshots only when DEBUG_MODE is True"""
+    print(f"take_screenshot called with DEBUG_MODE={DEBUG_MODE}")  # Temporary debug print
     if DEBUG_MODE:
         try:
             now = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = f"{SCREENSHOTS_DIR}/{name}_{now}.png"
-            page.screenshot(path=screenshot_path)
+            print(f"Attempting to take screenshot: {screenshot_path}")  # Temporary debug print
+            await page.screenshot(path=screenshot_path)
+            print(f"Screenshot taken successfully: {screenshot_path}")  # Temporary debug print
             return screenshot_path
         except Exception as e:
             print(f"Failed to take screenshot: {e}")
             return None
+    else:
+        print("DEBUG_MODE is False, skipping screenshot")  # Temporary debug print
     return None
 
 async def _login_medium(page):
@@ -555,7 +560,7 @@ async def _login_medium(page):
         debug["page_title"] = await page.title()
         
         # Take a screenshot of the homepage
-        screenshot_path = _take_screenshot(page, "medium_homepage")
+        screenshot_path = await take_screenshot(page, "medium_homepage")
         if screenshot_path:
             add_step("medium_homepage_screenshot", {"path": screenshot_path})
         
@@ -586,7 +591,7 @@ async def _login_medium(page):
         
         if not signin_button:
             # Take a screenshot of the page when sign-in button not found
-            screenshot_path = _take_screenshot(page, "signin_button_not_found")
+            screenshot_path = await take_screenshot(page, "signin_button_not_found")
             if screenshot_path:
                 add_step("signin_button_not_found_screenshot", {"path": screenshot_path})
             
@@ -627,7 +632,7 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking sign-in
-        screenshot_path = _take_screenshot(page, "after_signin_click")
+        screenshot_path = await take_screenshot(page, "after_signin_click")
         if screenshot_path:
             add_step("after_signin_click_screenshot", {"path": screenshot_path})
         
@@ -688,7 +693,7 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking email option
-        screenshot_path = _take_screenshot(page, "after_email_option_click")
+        screenshot_path = await take_screenshot(page, "after_email_option_click")
         if screenshot_path:
             add_step("after_email_option_click_screenshot", {"path": screenshot_path})
         
@@ -724,7 +729,7 @@ async def _login_medium(page):
         
         if not email_field:
             # Take a screenshot when email field not found
-            screenshot_path = _take_screenshot(page, "email_field_not_found")
+            screenshot_path = await take_screenshot(page, "email_field_not_found")
             if screenshot_path:
                 add_step("email_field_not_found_screenshot", {"path": screenshot_path})
             
@@ -763,10 +768,9 @@ async def _login_medium(page):
         
         if not continue_button:
             # Take a screenshot when continue button not found
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = f"{SCREENSHOTS_DIR}/continue_button_not_found_{now}.png"
-            await page.screenshot(path=screenshot_path)
-            add_step("continue_button_not_found_screenshot", {"path": screenshot_path})
+            screenshot_path = await take_screenshot(page, "continue_button_not_found")
+            if screenshot_path:
+                add_step("continue_button_not_found_screenshot", {"path": screenshot_path})
             
             return {
                 "authenticated": False, 
@@ -781,10 +785,9 @@ async def _login_medium(page):
         await page.wait_for_load_state("networkidle")
         
         # Take a screenshot after clicking continue
-        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        screenshot_path = f"{SCREENSHOTS_DIR}/after_continue_click_{now}.png"
-        await page.screenshot(path=screenshot_path)
-        add_step("after_continue_click_screenshot", {"path": screenshot_path})
+        screenshot_path = await take_screenshot(page, "after_continue_click")
+        if screenshot_path:
+            add_step("after_continue_click_screenshot", {"path": screenshot_path})
         
         debug["current_url"] = page.url
         debug["page_title"] = await page.title()
@@ -863,10 +866,9 @@ async def _login_medium(page):
             await asyncio.sleep(3)
             
             # Take a screenshot after clicking sign in
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = f"{SCREENSHOTS_DIR}/after_signin_password_{now}.png"
-            await page.screenshot(path=screenshot_path)
-            add_step("after_signin_password_screenshot", {"path": screenshot_path})
+            screenshot_path = await take_screenshot(page, "after_signin_password")
+            if screenshot_path:
+                add_step("after_signin_password_screenshot", {"path": screenshot_path})
         else:
             add_step("no_password_field_found", {"likely_using_email_link": True})
         
@@ -898,20 +900,18 @@ async def _login_medium(page):
             add_step("authentication_successful", {"selector_found": authenticated_selector})
             
             # Take a screenshot of success state
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = f"{SCREENSHOTS_DIR}/login_success_{now}.png"
-            await page.screenshot(path=screenshot_path)
-            add_step("login_success_screenshot", {"path": screenshot_path})
+            screenshot_path = await take_screenshot(page, "login_success")
+            if screenshot_path:
+                add_step("login_success_screenshot", {"path": screenshot_path})
             
             return {"authenticated": True, "error": None, "debug": debug}
         else:
             add_step("authentication_failed")
             
             # Take a screenshot of failed state
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = f"{SCREENSHOTS_DIR}/login_failed_{now}.png"
-            await page.screenshot(path=screenshot_path)
-            add_step("login_failed_screenshot", {"path": screenshot_path})
+            screenshot_path = await take_screenshot(page, "login_failed")
+            if screenshot_path:
+                add_step("login_failed_screenshot", {"path": screenshot_path})
             
             # Additional check: See if there's an error message
             error_message = ""
